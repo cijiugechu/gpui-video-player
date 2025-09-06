@@ -1,12 +1,12 @@
 use crate::Error;
 use gstreamer as gst;
 use gstreamer_app as gst_app;
-use gstreamer_video as gst_video;
 use gstreamer_app::prelude::*;
+use gstreamer_video as gst_video;
 // Note: GPUI imports removed since we're using simple Vec<u8> for RGBA data
 use parking_lot::{Mutex, RwLock};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 /// Position in the media.
@@ -246,6 +246,9 @@ impl Video {
         let pad = video_sink.pads().first().cloned().unwrap();
 
         cleanup!(pipeline.set_state(gst::State::Playing))?;
+
+        // Wait a brief moment for the pipeline to start playing
+        let _ = pipeline.state(gst::ClockTime::from_mseconds(100));
         cleanup!(pipeline.state(gst::ClockTime::from_seconds(5)).0)?;
 
         let caps = cleanup!(pad.current_caps().ok_or(Error::Caps))?;
@@ -298,16 +301,18 @@ impl Video {
             while alive_ref.load(Ordering::Acquire) {
                 if let Err(err) = (|| -> Result<(), gst::FlowError> {
                     // Try to pull a new sample; on timeout just continue (no frame this tick)
-                    let sample = if pipeline_ref.state(gst::ClockTime::ZERO).1 != gst::State::Playing {
-                        video_sink.try_pull_preroll(gst::ClockTime::from_mseconds(16))
-                            .ok_or(gst::FlowError::Eos)?
-                    } else {
-                        video_sink.try_pull_sample(gst::ClockTime::from_mseconds(16))
-                            .ok_or(gst::FlowError::Eos)?
-                    };
+                    let sample =
+                        if pipeline_ref.state(gst::ClockTime::ZERO).1 != gst::State::Playing {
+                            video_sink
+                                .try_pull_preroll(gst::ClockTime::from_mseconds(16))
+                                .ok_or(gst::FlowError::Eos)?
+                        } else {
+                            video_sink
+                                .try_pull_sample(gst::ClockTime::from_mseconds(16))
+                                .ok_or(gst::FlowError::Eos)?
+                        };
 
-                    *last_frame_time_ref
-                        .lock() = Instant::now();
+                    *last_frame_time_ref.lock() = Instant::now();
 
                     let frame_segment = sample.segment().cloned().ok_or(gst::FlowError::Error)?;
                     let buffer = sample.buffer().ok_or(gst::FlowError::Error)?;
@@ -320,6 +325,7 @@ impl Video {
                         *frame_guard = Frame(sample);
                     }
 
+                    // Always mark frame as ready for upload
                     upload_frame_ref.store(true, Ordering::SeqCst);
 
                     // Handle subtitles
@@ -509,12 +515,15 @@ impl Video {
     /// Get the current NV12 frame data if available.
     pub fn current_frame_data(&self) -> Option<(Vec<u8>, u32, u32)> {
         let inner = self.read();
+
+        // Check if we have frame data available
         if let Some(readable) = inner.frame.lock().readable() {
             let data = readable.as_slice().to_vec();
-            Some((data, inner.width as u32, inner.height as u32))
-        } else {
-            None
+            if !data.is_empty() {
+                return Some((data, inner.width as u32, inner.height as u32));
+            }
         }
+
+        None
     }
 }
-

@@ -18,6 +18,7 @@ image = { version = "0.25", default-features = false, features = ["png", "gif", 
 smallvec = "1"
 wgpu = "22.0"
 bytemuck = { version = "1.0", features = ["derive"] }
+yuvutils-rs = "0.8"
 
 [dev-dependencies]
 env_logger = "0.11"

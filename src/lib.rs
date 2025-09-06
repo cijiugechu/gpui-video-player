@@ -27,18 +27,20 @@
 //! }
 //! ```
 
+mod advanced_gpu_renderer;
 mod error;
+mod gpu_video_renderer;
 mod video;
 mod video_player;
-mod gpu_video_renderer;
-mod advanced_gpu_renderer;
 
-pub use error::Error;
-pub use video::{Position, Video};
-pub use video_player::{VideoPlayer, VideoPlayerEvent, VideoPlayerView, video_player, video_player_from_uri};
-pub use gpu_video_renderer::{GpuVideoRenderer, gpu_video_renderer};
 pub use advanced_gpu_renderer::{AdvancedGpuRenderer, advanced_gpu_renderer};
+pub use error::Error;
+pub use gpu_video_renderer::{GpuVideoRenderer, gpu_video_renderer};
+pub use video::{Position, Video};
+pub use video_player::{
+    VideoPlayer, VideoPlayerEvent, VideoPlayerView, video_player, video_player_from_uri,
+};
 
 // Re-export commonly used types
-pub use url::Url;
 pub use gstreamer as gst;
+pub use url::Url;

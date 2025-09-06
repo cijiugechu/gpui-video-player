@@ -1,9 +1,9 @@
 use crate::video::Video;
-use gstreamer as gst;
 use gpui::{
-    div, AppContext, Context, Entity, EventEmitter, IntoElement,
-    ParentElement, Render, Styled, Window,
+    AppContext, Context, Entity, EventEmitter, IntoElement, ParentElement, Render, Styled, Window,
+    div,
 };
+use gstreamer as gst;
 use std::sync::atomic::Ordering;
 
 /// Content fit modes for video display.
@@ -97,7 +97,7 @@ impl VideoPlayer {
     /// Check for GStreamer bus messages and handle events.
     fn handle_bus_messages(&self, cx: &mut Context<VideoPlayerView>) {
         let inner = self.video.read();
-        
+
         while let Some(msg) = inner
             .bus
             .pop_filtered(&[gst::MessageType::Error, gst::MessageType::Eos])
@@ -137,7 +137,10 @@ pub struct VideoPlayerView {
 impl VideoPlayerView {
     /// Create a new video player view.
     pub fn new(player: VideoPlayer) -> Self {
-        Self { player, gpu_renderer: None }
+        Self {
+            player,
+            gpu_renderer: None,
+        }
     }
 
     /// Get a reference to the video player.
@@ -156,7 +159,7 @@ impl EventEmitter<VideoPlayerEvent> for VideoPlayerView {}
 impl Render for VideoPlayerView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         use crate::gpu_video_renderer::gpu_video_renderer;
-        
+
         // Handle GStreamer events
         self.player.handle_bus_messages(cx);
 

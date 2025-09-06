@@ -1,7 +1,5 @@
 use crate::video::Video;
-use gpui::{
-    div, px, Context, IntoElement, ParentElement, Render, Styled, Window,
-};
+use gpui::{Context, IntoElement, ParentElement, Render, Styled, Window, div, px};
 use std::sync::atomic::Ordering;
 
 /// Simple GPU-based video renderer placeholder
@@ -29,7 +27,7 @@ impl Render for GpuVideoRenderer {
         }
 
         let (width, height) = self.video.size();
-        
+
         // Get the current frame data
         if let Some((_yuv_data, _frame_width, _frame_height)) = self.video.current_frame_data() {
             // For now, show a green rectangle to indicate video is playing

@@ -1,5 +1,5 @@
-use gpui::{App, div, Application, Context, Entity, Render, Window, WindowOptions, prelude::*};
-use gpui_video_player::{advanced_gpu_renderer, VideoPlayer};
+use gpui::{App, Application, Context, Entity, Render, Window, WindowOptions, div, prelude::*};
+use gpui_video_player::advanced_gpu_renderer;
 use std::path::PathBuf;
 use url::Url;
 
@@ -43,5 +43,3 @@ fn main() {
         cx.activate(true);
     });
 }
-
-

@@ -1,9 +1,10 @@
 use crate::video::Video;
 use gpui::{
-    div, px, Context, IntoElement, ParentElement, Render, Styled, Window,
-    prelude::StyledImage as _,
+    Context, IntoElement, ParentElement, Render, Styled, Window, div, prelude::StyledImage as _, px,
 };
-use std::sync::atomic::Ordering;
+use yuvutils_rs::{
+    YuvBiPlanarImage, YuvConversionMode, YuvRange, YuvStandardMatrix, yuv_nv12_to_rgba,
+};
 
 /// Advanced GPU-based video renderer that converts YUV to RGB on CPU as fallback
 /// This provides a working solution while we develop full GPU integration
@@ -20,82 +21,103 @@ impl AdvancedGpuRenderer {
         &self.video
     }
 
-    /// Convert NV12 YUV data to RGB on CPU
+    /// Convert NV12 YUV data to RGB using optimized yuvutils-rs
     fn yuv_to_rgb(&self, yuv_data: &[u8], width: u32, height: u32) -> Vec<u8> {
-        let width = width as usize;
-        let height = height as usize;
-        let y_size = width * height;
-        
-        if yuv_data.len() < y_size + (width * height / 2) {
+        let width_usize = width as usize;
+        let height_usize = height as usize;
+        let y_size = width_usize * height_usize;
+        let uv_size = (width_usize * height_usize) / 2;
+
+        if yuv_data.len() < y_size + uv_size {
             // Not enough data, return black frame
-            return vec![0; width * height * 4];
+            return vec![0; width_usize * height_usize * 4];
         }
 
-        let mut rgb_data = vec![0u8; width * height * 4];
-        
-        for y in 0..height {
-            for x in 0..width {
-                let y_index = y * width + x;
-                let uv_index = y_size + (y / 2) * width + (x & !1);
-                
-                if y_index >= y_size || uv_index + 1 >= yuv_data.len() {
-                    continue;
-                }
-                
-                let y_val = yuv_data[y_index] as f32;
-                let u_val = yuv_data[uv_index] as f32;
-                let v_val = yuv_data[uv_index + 1] as f32;
-                
-                // YUV to RGB conversion (ITU-R BT.601)
-                let c = y_val - 16.0;
-                let d = u_val - 128.0;
-                let e = v_val - 128.0;
-                
-                let r = (1.164 * c + 1.596 * e).clamp(0.0, 255.0) as u8;
-                let g = (1.164 * c - 0.392 * d - 0.813 * e).clamp(0.0, 255.0) as u8;
-                let b = (1.164 * c + 2.017 * d).clamp(0.0, 255.0) as u8;
-                
-                let rgb_index = (y * width + x) * 4;
-                rgb_data[rgb_index] = r;
-                rgb_data[rgb_index + 1] = g;
-                rgb_data[rgb_index + 2] = b;
-                rgb_data[rgb_index + 3] = 255; // Alpha
+        // Split NV12 data into Y and UV planes
+        let y_plane = &yuv_data[..y_size];
+        let uv_plane = &yuv_data[y_size..y_size + uv_size];
+
+        // Create YuvBiPlanarImage structure for NV12 data
+        let yuv_bi_planar = YuvBiPlanarImage {
+            y_plane,
+            y_stride: width,
+            uv_plane,
+            uv_stride: width, // NV12 UV stride is same as width
+            width,
+            height,
+        };
+
+        // Prepare output RGB buffer (RGBA format)
+        let mut rgba = vec![0u8; width_usize * height_usize * 4];
+        let rgba_stride = width * 4;
+
+        // Use yuvutils-rs optimized NV12 to RGB conversion
+        // This uses SIMD optimizations (NEON, AVX2, AVX-512) when available
+        // Try Bt709 first (HD standard) with full range
+        if let Ok(_) = yuv_nv12_to_rgba(
+            &yuv_bi_planar,
+            &mut rgba,
+            rgba_stride,
+            YuvRange::Full,              // Try full range first
+            YuvStandardMatrix::Bt709,    // HD standard
+            YuvConversionMode::Balanced, // Use balanced conversion mode (default)
+        ) {
+            return rgba;
+        }
+
+        // Try Bt709 with limited range
+        if let Ok(_) = yuv_nv12_to_rgba(
+            &yuv_bi_planar,
+            &mut rgba,
+            rgba_stride,
+            YuvRange::Limited,           // Limited range
+            YuvStandardMatrix::Bt709,    // HD standard
+            YuvConversionMode::Balanced, // Use balanced conversion mode (default)
+        ) {
+            return rgba;
+        }
+
+        // Fallback to Bt601 (SD standard)
+        match yuv_nv12_to_rgba(
+            &yuv_bi_planar,
+            &mut rgba,
+            rgba_stride,
+            YuvRange::Limited,
+            YuvStandardMatrix::Bt601,
+            YuvConversionMode::Balanced, // Use balanced conversion mode (default)
+        ) {
+            Ok(_) => rgba,
+            Err(_) => {
+                // Final fallback to black frame on conversion error
+                vec![0; width_usize * height_usize * 4]
             }
         }
-        
-        rgb_data
     }
 }
 
 impl Render for AdvancedGpuRenderer {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // Check if we have a new frame and request redraw if so
-        let inner = self.video.read();
-        if inner.upload_frame.swap(false, Ordering::SeqCst) {
-            cx.notify();
-        }
+        // Always request continuous redraws to ensure smooth video playback
+        // This is necessary for real-time video rendering
+        cx.notify();
 
         let (width, height) = self.video.size();
-        
+
         // Get the current frame data and convert to RGB
         if let Some((yuv_data, frame_width, frame_height)) = self.video.current_frame_data() {
             let rgb_data = self.yuv_to_rgb(&yuv_data, frame_width, frame_height);
-            
+
             // Create GPUI image from RGB data
             use image::{ImageBuffer, Rgba};
             use smallvec::SmallVec;
-            
-            if let Some(image_buffer) = ImageBuffer::<Rgba<u8>, _>::from_raw(
-                frame_width, 
-                frame_height, 
-                rgb_data
-            ) {
-                let frames: SmallVec<[image::Frame; 1]> = SmallVec::from_elem(
-                    image::Frame::new(image_buffer), 
-                    1
-                );
+
+            if let Some(image_buffer) =
+                ImageBuffer::<Rgba<u8>, _>::from_raw(frame_width, frame_height, rgb_data)
+            {
+                let frames: SmallVec<[image::Frame; 1]> =
+                    SmallVec::from_elem(image::Frame::new(image_buffer), 1);
                 let render_image = std::sync::Arc::new(gpui::RenderImage::new(frames));
-                
+
                 div()
                     .w(px(width as f32))
                     .h(px(height as f32))

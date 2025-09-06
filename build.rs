@@ -4,6 +4,8 @@ fn main() {
         println!("cargo:rustc-link-search=framework=/Library/Frameworks");
 
         // Add an rpath to the GStreamer framework directory
-        println!("cargo:rustc-link-arg=-Wl,-rpath,/Library/Frameworks/GStreamer.framework/Versions/1.0/lib");
+        println!(
+            "cargo:rustc-link-arg=-Wl,-rpath,/Library/Frameworks/GStreamer.framework/Versions/1.0/lib"
+        );
     }
 }
