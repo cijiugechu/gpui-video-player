@@ -244,10 +244,8 @@ impl Render for VideoPlayerView {
         // Handle GStreamer events
         self.player.handle_bus_messages(cx);
 
-        // Only request redraw when we have a new frame
-        if self.player.has_new_frame() {
-            cx.notify();
-        }
+        // Always ensure we're rendering - the renderer will handle frame updates
+        cx.notify();
 
         // Create or reuse the GPU renderer entity
         if self.gpu_renderer.is_none() {

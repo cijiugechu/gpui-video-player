@@ -33,7 +33,9 @@ mod gpu_video_renderer;
 mod video;
 mod video_player;
 
-pub use advanced_gpu_renderer::{AdvancedGpuRenderer, advanced_gpu_renderer};
+pub use advanced_gpu_renderer::{
+    AdvancedGpuRenderer, VideoElement, advanced_gpu_renderer, video_element,
+};
 pub use error::Error;
 pub use gpu_video_renderer::{GpuVideoRenderer, gpu_video_renderer};
 pub use video::{Position, Video};
