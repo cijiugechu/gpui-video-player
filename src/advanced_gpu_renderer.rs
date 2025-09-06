@@ -1,6 +1,6 @@
 use crate::video::Video;
 use gpui::{
-    Context, IntoElement, ParentElement, Render, Styled, Window, div, prelude::StyledImage as _, px,
+    Context, IntoElement, ParentElement, Render, Styled, Window, div, prelude::StyledImage as _,
 };
 use yuvutils_rs::{
     YuvBiPlanarImage, YuvConversionMode, YuvRange, YuvStandardMatrix, yuv_nv12_to_rgba,
@@ -10,15 +10,38 @@ use yuvutils_rs::{
 /// This provides a working solution while we develop full GPU integration
 pub struct AdvancedGpuRenderer {
     video: Video,
+    display_width: Option<gpui::Pixels>,
+    display_height: Option<gpui::Pixels>,
 }
 
 impl AdvancedGpuRenderer {
     pub fn new(video: Video) -> Self {
-        Self { video }
+        Self {
+            video,
+            display_width: None,
+            display_height: None,
+        }
     }
 
     pub fn video(&self) -> &Video {
         &self.video
+    }
+
+    /// Set the display dimensions for the video renderer.
+    pub fn set_display_size(&mut self, width: gpui::Pixels, height: gpui::Pixels) {
+        self.display_width = Some(width);
+        self.display_height = Some(height);
+    }
+
+    /// Get the current display dimensions, falling back to video natural size.
+    fn get_display_size(&self) -> (gpui::Pixels, gpui::Pixels) {
+        match (self.display_width, self.display_height) {
+            (Some(w), Some(h)) => (w, h),
+            _ => {
+                let (video_width, video_height) = self.video.size();
+                (gpui::px(video_width as f32), gpui::px(video_height as f32))
+            }
+        }
     }
 
     /// Convert NV12 YUV data to RGB using optimized yuvutils-rs
@@ -101,7 +124,7 @@ impl Render for AdvancedGpuRenderer {
         // This is necessary for real-time video rendering
         cx.notify();
 
-        let (width, height) = self.video.size();
+        let (display_width, display_height) = self.get_display_size();
 
         // Get the current frame data and convert to RGB
         if let Some((yuv_data, frame_width, frame_height)) = self.video.current_frame_data() {
@@ -119,14 +142,14 @@ impl Render for AdvancedGpuRenderer {
                 let render_image = std::sync::Arc::new(gpui::RenderImage::new(frames));
 
                 div()
-                    .w(px(width as f32))
-                    .h(px(height as f32))
-                    .child(gpui::img(render_image).object_fit(gpui::ObjectFit::Contain))
+                    .w(display_width)
+                    .h(display_height)
+                    .child(gpui::img(render_image).object_fit(gpui::ObjectFit::Fill))
             } else {
                 // Fallback to colored rectangle if image creation fails
                 div()
-                    .w(px(width as f32))
-                    .h(px(height as f32))
+                    .w(display_width)
+                    .h(display_height)
                     .bg(gpui::blue())
                     .flex()
                     .items_center()
@@ -136,8 +159,8 @@ impl Render for AdvancedGpuRenderer {
         } else {
             // No frame available - show loading state
             div()
-                .w(px(width as f32))
-                .h(px(height as f32))
+                .w(display_width)
+                .h(display_height)
                 .bg(gpui::black())
                 .flex()
                 .items_center()

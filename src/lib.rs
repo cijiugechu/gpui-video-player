@@ -38,7 +38,7 @@ pub use error::Error;
 pub use gpu_video_renderer::{GpuVideoRenderer, gpu_video_renderer};
 pub use video::{Position, Video};
 pub use video_player::{
-    VideoPlayer, VideoPlayerEvent, VideoPlayerView, video_player, video_player_from_uri,
+    ContentFit, VideoPlayer, VideoPlayerEvent, VideoPlayerView, video_player, video_player_from_uri,
 };
 
 // Re-export commonly used types

@@ -7,7 +7,7 @@ use gstreamer as gst;
 use std::sync::atomic::Ordering;
 
 /// Content fit modes for video display.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ContentFit {
     Contain,
     Cover,
@@ -88,6 +88,87 @@ impl VideoPlayer {
         &self.video
     }
 
+    /// Get the specified width of the video player.
+    pub fn get_width(&self) -> Option<gpui::Pixels> {
+        self.width
+    }
+
+    /// Get the specified height of the video player.
+    pub fn get_height(&self) -> Option<gpui::Pixels> {
+        self.height
+    }
+
+    /// Get the content fit mode.
+    pub fn get_content_fit(&self) -> ContentFit {
+        self.fit
+    }
+
+    /// Calculate the display dimensions based on video size, specified dimensions, and content fit.
+    pub fn calculate_display_size(&self) -> (gpui::Pixels, gpui::Pixels) {
+        let (video_width, video_height) = self.video.size();
+        let video_aspect = video_width as f32 / video_height as f32;
+
+        match (self.get_width(), self.get_height()) {
+            (Some(w), Some(h)) => {
+                // Both width and height specified - apply ContentFit
+                let container_aspect = w.0 / h.0;
+
+                match self.fit {
+                    ContentFit::Fill => (w, h),
+                    ContentFit::Contain => {
+                        if video_aspect > container_aspect {
+                            // Video is wider - fit to width
+                            (w, gpui::px(w.0 / video_aspect))
+                        } else {
+                            // Video is taller - fit to height
+                            (gpui::px(h.0 * video_aspect), h)
+                        }
+                    }
+                    ContentFit::Cover => {
+                        if video_aspect > container_aspect {
+                            // Video is wider - fit to height
+                            (gpui::px(h.0 * video_aspect), h)
+                        } else {
+                            // Video is taller - fit to width
+                            (w, gpui::px(w.0 / video_aspect))
+                        }
+                    }
+                    ContentFit::ScaleDown => {
+                        let natural_width = gpui::px(video_width as f32);
+                        let natural_height = gpui::px(video_height as f32);
+
+                        if natural_width.0 <= w.0 && natural_height.0 <= h.0 {
+                            // Video fits naturally
+                            (natural_width, natural_height)
+                        } else {
+                            // Scale down using contain logic
+                            if video_aspect > container_aspect {
+                                (w, gpui::px(w.0 / video_aspect))
+                            } else {
+                                (gpui::px(h.0 * video_aspect), h)
+                            }
+                        }
+                    }
+                    ContentFit::None => {
+                        (gpui::px(video_width as f32), gpui::px(video_height as f32))
+                    }
+                }
+            }
+            (Some(w), None) => {
+                // Only width specified - maintain aspect ratio
+                (w, gpui::px(w.0 / video_aspect))
+            }
+            (None, Some(h)) => {
+                // Only height specified - maintain aspect ratio
+                (gpui::px(h.0 * video_aspect), h)
+            }
+            (None, None) => {
+                // No dimensions specified - use natural size
+                (gpui::px(video_width as f32), gpui::px(video_height as f32))
+            }
+        }
+    }
+
     /// Check if a new frame is available.
     fn has_new_frame(&self) -> bool {
         let inner = self.video.read();
@@ -131,7 +212,7 @@ impl VideoPlayer {
 /// A view wrapper for the VideoPlayer component.
 pub struct VideoPlayerView {
     player: VideoPlayer,
-    gpu_renderer: Option<Entity<crate::gpu_video_renderer::GpuVideoRenderer>>,
+    gpu_renderer: Option<Entity<crate::advanced_gpu_renderer::AdvancedGpuRenderer>>,
 }
 
 impl VideoPlayerView {
@@ -158,7 +239,7 @@ impl EventEmitter<VideoPlayerEvent> for VideoPlayerView {}
 
 impl Render for VideoPlayerView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        use crate::gpu_video_renderer::gpu_video_renderer;
+        use crate::advanced_gpu_renderer::advanced_gpu_renderer;
 
         // Handle GStreamer events
         self.player.handle_bus_messages(cx);
@@ -170,16 +251,60 @@ impl Render for VideoPlayerView {
 
         // Create or reuse the GPU renderer entity
         if self.gpu_renderer.is_none() {
-            let renderer = gpu_video_renderer(self.player.video.clone());
+            let renderer = advanced_gpu_renderer(self.player.video.clone());
             self.gpu_renderer = Some(cx.new(|_| renderer));
         }
 
-        div()
-            .size_full()
-            .flex()
-            .items_center()
-            .justify_center()
-            .child(self.gpu_renderer.as_ref().unwrap().clone())
+        let (display_width, display_height) = self.player.calculate_display_size();
+        let content_fit = self.player.get_content_fit();
+
+        // Create the container based on specified dimensions
+        let container = match (self.player.get_width(), self.player.get_height()) {
+            (Some(w), Some(h)) => {
+                // Both dimensions specified - create container with exact size
+                let mut container_div = div()
+                    .w(gpui::px(w.0))
+                    .h(gpui::px(h.0))
+                    .flex()
+                    .items_center()
+                    .justify_center();
+
+                if content_fit == ContentFit::Cover {
+                    // For Cover mode, clip overflow
+                    container_div = container_div.overflow_hidden();
+                }
+                container_div
+            }
+            (Some(w), None) => {
+                // Only width specified
+                div()
+                    .w(gpui::px(w.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+            }
+            (None, Some(h)) => {
+                // Only height specified
+                div()
+                    .h(gpui::px(h.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+            }
+            (None, None) => {
+                // No dimensions specified - size to content
+                div().flex().items_center().justify_center()
+            }
+        };
+
+        // Update the GPU renderer with the calculated dimensions
+        if let Some(renderer) = &self.gpu_renderer {
+            renderer.update(cx, |renderer, _cx| {
+                renderer.set_display_size(display_width, display_height);
+            });
+        }
+
+        container.child(self.gpu_renderer.as_ref().unwrap().clone())
     }
 }
 
