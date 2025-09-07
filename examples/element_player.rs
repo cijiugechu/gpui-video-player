@@ -1,5 +1,5 @@
 use gpui::{App, Application, Context, Render, Window, WindowOptions, div, prelude::*};
-use gpui_video_player::{Video, video_element};
+use gpui_video_player::{Video, video};
 use std::path::PathBuf;
 use url::Url;
 
@@ -20,7 +20,7 @@ impl Render for ElementPlayerExample {
             .flex()
             .items_center()
             .justify_center()
-            .child(video_element(self.video.clone()).id("main-video"))
+            .child(video(self.video.clone()).id("main-video"))
     }
 }
 
