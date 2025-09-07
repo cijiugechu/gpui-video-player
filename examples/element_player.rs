@@ -28,7 +28,7 @@ fn main() {
     env_logger::init();
     Application::new().run(|cx: &mut App| {
         let uri = Url::from_file_path(
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("./assets/test.mp4"),
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("./assets/test2.mp4"),
         )
         .expect("invalid file path");
 
