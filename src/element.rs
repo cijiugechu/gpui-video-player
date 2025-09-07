@@ -163,8 +163,12 @@ impl Element for VideoElement {
         window: &mut Window,
         _cx: &mut gpui::App,
     ) -> Self::PrepaintState {
-        // Schedule continuous repaints for video playback
-        window.request_animation_frame();
+        // Schedule repaints only when playing or when a new frame arrived.
+        let is_playing = !self.video.eos() && !self.video.paused();
+        let has_new_frame = self.video.take_frame_ready();
+        if is_playing || has_new_frame {
+            window.request_animation_frame();
+        }
         ()
     }
 

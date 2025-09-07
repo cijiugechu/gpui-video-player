@@ -4,6 +4,7 @@ use gstreamer_app as gst_app;
 use gstreamer_app::prelude::*;
 use gstreamer_video as gst_video;
 // Note: GPUI imports removed since we're using simple Vec<u8> for RGBA data
+use gst::message::MessageView;
 use parking_lot::{Mutex, RwLock};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -70,7 +71,7 @@ pub(crate) struct Internal {
     pub(crate) upload_frame: Arc<AtomicBool>,
     pub(crate) last_frame_time: Arc<Mutex<Instant>>,
     pub(crate) looping: bool,
-    pub(crate) is_eos: bool,
+    pub(crate) is_eos: Arc<AtomicBool>,
     pub(crate) restart_stream: bool,
 
     pub(crate) subtitle_text: Arc<Mutex<Option<String>>>,
@@ -144,7 +145,7 @@ impl Internal {
     }
 
     pub(crate) fn restart_stream(&mut self) -> Result<(), Error> {
-        self.is_eos = false;
+        self.is_eos.store(false, Ordering::SeqCst);
         self.set_paused(false);
         self.seek(0, false)?;
         Ok(())
@@ -159,7 +160,7 @@ impl Internal {
             })
             .unwrap(/* state was changed in ctor; state errors caught there */);
 
-        if self.is_eos && !paused {
+        if self.is_eos.load(Ordering::Acquire) && !paused {
             self.restart_stream = true;
         }
     }
@@ -294,23 +295,50 @@ impl Video {
         let upload_text_ref = Arc::clone(&upload_text);
 
         let pipeline_ref = pipeline.clone();
+        let bus_ref = pipeline_ref.bus().unwrap();
+        let is_eos = Arc::new(AtomicBool::new(false));
+        let is_eos_ref = Arc::clone(&is_eos);
 
         let worker = std::thread::spawn(move || {
             let mut clear_subtitles_at = None;
 
             while alive_ref.load(Ordering::Acquire) {
+                // Drain bus messages to detect EOS/errors
+                while let Some(msg) = bus_ref.timed_pop(gst::ClockTime::from_seconds(0)) {
+                    match msg.view() {
+                        MessageView::Eos(_) => {
+                            is_eos_ref.store(true, Ordering::SeqCst);
+                        }
+                        MessageView::Error(err) => {
+                            let debug = err.debug().unwrap_or_default();
+                            log::error!(
+                                "gstreamer error from {:?}: {} ({debug})",
+                                err.src(),
+                                err.error()
+                            );
+                        }
+                        _ => {}
+                    }
+                }
+
+                if is_eos_ref.load(Ordering::Acquire) {
+                    // Stop busy-polling once EOS reached
+                    std::thread::sleep(Duration::from_millis(50));
+                    continue;
+                }
                 if let Err(err) = (|| -> Result<(), gst::FlowError> {
                     // Try to pull a new sample; on timeout just continue (no frame this tick)
-                    let sample =
+                    let maybe_sample =
                         if pipeline_ref.state(gst::ClockTime::ZERO).1 != gst::State::Playing {
-                            video_sink
-                                .try_pull_preroll(gst::ClockTime::from_mseconds(16))
-                                .ok_or(gst::FlowError::Eos)?
+                            video_sink.try_pull_preroll(gst::ClockTime::from_mseconds(16))
                         } else {
-                            video_sink
-                                .try_pull_sample(gst::ClockTime::from_mseconds(16))
-                                .ok_or(gst::FlowError::Eos)?
+                            video_sink.try_pull_sample(gst::ClockTime::from_mseconds(16))
                         };
+
+                    let Some(sample) = maybe_sample else {
+                        // No sample available yet (timeout). Don't treat as error.
+                        return Ok(());
+                    };
 
                     *last_frame_time_ref.lock() = Instant::now();
 
@@ -374,7 +402,10 @@ impl Video {
 
                     Ok(())
                 })() {
-                    log::error!("error processing frame: {:?}", err);
+                    // Only log non-EOS errors
+                    if err != gst::FlowError::Eos {
+                        log::error!("error processing frame: {:?}", err);
+                    }
                 }
             }
         });
@@ -396,7 +427,7 @@ impl Video {
             upload_frame,
             last_frame_time,
             looping: false,
-            is_eos: false,
+            is_eos,
             restart_stream: false,
 
             subtitle_text,
@@ -449,7 +480,7 @@ impl Video {
 
     /// Get if the stream ended or not.
     pub fn eos(&self) -> bool {
-        self.read().is_eos
+        self.read().is_eos.load(Ordering::Acquire)
     }
 
     /// Get if the media will loop or not.
@@ -525,5 +556,10 @@ impl Video {
         }
 
         None
+    }
+
+    /// Returns true if a new frame arrived since last check and resets the flag.
+    pub fn take_frame_ready(&self) -> bool {
+        self.read().upload_frame.swap(false, Ordering::SeqCst)
     }
 }
