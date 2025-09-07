@@ -21,7 +21,6 @@ yuv = "0.8"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-video = "0.4"
-libc = "0.2"
 core-foundation = "0.10"
 
 [dev-dependencies]
