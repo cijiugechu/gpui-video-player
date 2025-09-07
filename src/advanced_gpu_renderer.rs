@@ -3,7 +3,7 @@ use gpui::{
     Context, Element, ElementId, GlobalElementId, InspectorElementId, IntoElement, LayoutId,
     ParentElement, Render, Styled, Window, div, prelude::StyledImage as _,
 };
-use yuvutils_rs::{
+use yuv::{
     YuvBiPlanarImage, YuvConversionMode, YuvRange, YuvStandardMatrix, yuv_nv12_to_rgba,
 };
 

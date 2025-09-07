@@ -5,20 +5,19 @@ edition = "2024"
 
 [dependencies]
 gpui = { git = "https://github.com/zed-industries/zed.git" }
-gstreamer = "0.23"
-gstreamer-app = "0.23" # appsink
-gstreamer-base = "0.23" # basesrc
-gstreamer-video = "0.23" # video info/frames (stride-aware copies)
-glib = "0.20" # gobject traits and error type
+gstreamer = "0.24"
+gstreamer-app = "0.24" # appsink
+gstreamer-base = "0.24" # basesrc
+gstreamer-video = "0.24" # video info/frames (stride-aware copies)
+glib = "0.21" # gobject traits and error type
 log = "0.4"
 thiserror = "1"
 url = "2" # media uri
 parking_lot = "0.12"
 image = { version = "0.25", default-features = false, features = ["png", "gif", "webp"] }
 smallvec = "1"
-wgpu = "22.0"
 bytemuck = { version = "1.0", features = ["derive"] }
-yuvutils-rs = "0.8"
+yuv = "0.8"
 
 [dev-dependencies]
 env_logger = "0.11"
