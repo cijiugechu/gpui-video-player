@@ -76,6 +76,7 @@ impl Default for VideoOptions {
 }
 
 #[derive(Debug)]
+#[allow(unused)]
 pub(crate) struct Internal {
     pub(crate) id: u64,
     pub(crate) bus: gst::Bus,
@@ -239,7 +240,7 @@ impl Video {
         gst::init()?;
 
         let pipeline = format!(
-            "playbin uri=\"{}\" video-sink=\"videoscale ! videoconvert ! appsink name=gpui_video drop=true caps=video/x-raw,format=NV12,pixel-aspect-ratio=1/1\"",
+            "playbin uri=\"{}\" video-sink=\"videoscale ! videoconvert ! appsink name=gpui_video drop=true max-buffers=3 enable-last-sample=false caps=video/x-raw,format=NV12,pixel-aspect-ratio=1/1\"",
             uri.as_str()
         );
         let pipeline = gst::parse::launch(pipeline.as_ref())?
@@ -293,6 +294,17 @@ impl Video {
                     e
                 })
             };
+        }
+
+        // Configure sinks to prevent unbounded buffering in appsink
+        // Limit queue size and drop old buffers when full; also avoid retaining last sample
+        video_sink.set_drop(true);
+        video_sink.set_max_buffers(3);
+        video_sink.set_property("enable-last-sample", false);
+        if let Some(ref ts) = text_sink {
+            ts.set_drop(true);
+            ts.set_max_buffers(1);
+            ts.set_property("enable-last-sample", false);
         }
 
         let pad = video_sink.pads().first().cloned().unwrap();
