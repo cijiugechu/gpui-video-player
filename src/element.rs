@@ -290,26 +290,30 @@ impl VideoElement {
 
         // Use yuvutils-rs optimized NV12 to RGB conversion
         // Try Bt709 first (HD standard) with full range
-        if let Ok(_) = yuv_nv12_to_bgra(
+        if yuv_nv12_to_bgra(
             &yuv_bi_planar,
             &mut bgra,
             rgba_stride,
             YuvRange::Full,              // Try full range first
             YuvStandardMatrix::Bt709,    // HD standard
             YuvConversionMode::Balanced, // Use balanced conversion mode (default)
-        ) {
+        )
+        .is_ok()
+        {
             return bgra;
         }
 
         // Try Bt709 with limited range
-        if let Ok(_) = yuv_nv12_to_bgra(
+        if yuv_nv12_to_bgra(
             &yuv_bi_planar,
             &mut bgra,
             rgba_stride,
             YuvRange::Limited,           // Limited range
             YuvStandardMatrix::Bt709,    // HD standard
             YuvConversionMode::Balanced, // Use balanced conversion mode (default)
-        ) {
+        )
+        .is_ok()
+        {
             return bgra;
         }
 
@@ -394,7 +398,6 @@ impl Element for VideoElement {
         if is_playing || has_new_frame {
             window.request_animation_frame();
         }
-        ()
     }
 
     fn paint(

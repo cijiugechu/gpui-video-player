@@ -212,21 +212,21 @@ pub struct Video(pub(crate) Arc<RwLock<Internal>>);
 impl Drop for Video {
     fn drop(&mut self) {
         // Only cleanup if this is the last reference
-        if Arc::strong_count(&self.0) == 1 {
-            if let Some(mut inner) = self.0.try_write() {
-                inner
-                    .source
-                    .set_state(gst::State::Null)
-                    .expect("failed to set state");
+        if Arc::strong_count(&self.0) == 1
+            && let Some(mut inner) = self.0.try_write()
+        {
+            inner
+                .source
+                .set_state(gst::State::Null)
+                .expect("failed to set state");
 
-                inner.alive.store(false, Ordering::SeqCst);
-                if let Some(worker) = inner.worker.take() {
-                    if let Err(err) = worker.join() {
-                        match err.downcast_ref::<String>() {
-                            Some(e) => log::error!("Video thread panicked: {e}"),
-                            None => log::error!("Video thread panicked with unknown reason"),
-                        }
-                    }
+            inner.alive.store(false, Ordering::SeqCst);
+            if let Some(worker) = inner.worker.take()
+                && let Err(err) = worker.join()
+            {
+                match err.downcast_ref::<String>() {
+                    Some(e) => log::error!("Video thread panicked: {e}"),
+                    None => log::error!("Video thread panicked with unknown reason"),
                 }
             }
         }
@@ -443,12 +443,12 @@ impl Video {
                     upload_frame_ref.store(true, Ordering::SeqCst);
 
                     // Handle subtitles
-                    if let Some(at) = clear_subtitles_at {
-                        if frame_pts >= at {
-                            *subtitle_text_ref.lock() = None;
-                            upload_text_ref.store(true, Ordering::SeqCst);
-                            clear_subtitles_at = None;
-                        }
+                    if let Some(at) = clear_subtitles_at
+                        && frame_pts >= at
+                    {
+                        *subtitle_text_ref.lock() = None;
+                        upload_text_ref.store(true, Ordering::SeqCst);
+                        clear_subtitles_at = None;
                     }
 
                     let text = text_sink
@@ -774,12 +774,12 @@ impl Video {
         let (width, height) = self.size();
         let inner = self.read();
         let maybe_frame = inner.frame_buffer.lock().pop_front();
-        if let Some(frame) = maybe_frame {
-            if let Some(readable) = frame.readable() {
-                let data = readable.as_slice().to_vec();
-                if !data.is_empty() {
-                    return Some((data, width as u32, height as u32));
-                }
+        if let Some(frame) = maybe_frame
+            && let Some(readable) = frame.readable()
+        {
+            let data = readable.as_slice().to_vec();
+            if !data.is_empty() {
+                return Some((data, width as u32, height as u32));
             }
         }
         None
