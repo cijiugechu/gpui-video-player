@@ -6,8 +6,9 @@ use gstreamer_video as gst_video;
 // Note: GPUI imports removed since we're using simple Vec<u8> for RGBA data
 use gst::message::MessageView;
 use parking_lot::{Mutex, RwLock};
+use std::collections::VecDeque;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 /// Position in the media.
@@ -69,6 +70,8 @@ pub(crate) struct Internal {
 
     pub(crate) frame: Arc<Mutex<Frame>>,
     pub(crate) upload_frame: Arc<AtomicBool>,
+    pub(crate) frame_buffer: Arc<Mutex<VecDeque<Frame>>>,
+    pub(crate) frame_buffer_capacity: Arc<AtomicUsize>,
     pub(crate) last_frame_time: Arc<Mutex<Instant>>,
     pub(crate) looping: bool,
     pub(crate) is_eos: Arc<AtomicBool>,
@@ -281,11 +284,16 @@ impl Video {
 
         let frame = Arc::new(Mutex::new(Frame::empty()));
         let upload_frame = Arc::new(AtomicBool::new(false));
+        let frame_buffer = Arc::new(Mutex::new(VecDeque::new()));
+        // Default to a small buffer so the element can consume buffered frames
+        let frame_buffer_capacity = Arc::new(AtomicUsize::new(3));
         let alive = Arc::new(AtomicBool::new(true));
         let last_frame_time = Arc::new(Mutex::new(Instant::now()));
 
         let frame_ref = Arc::clone(&frame);
         let upload_frame_ref = Arc::clone(&upload_frame);
+        let frame_buffer_ref = Arc::clone(&frame_buffer);
+        let frame_buffer_capacity_ref = Arc::clone(&frame_buffer_capacity);
         let alive_ref = Arc::clone(&alive);
         let last_frame_time_ref = Arc::clone(&last_frame_time);
 
@@ -351,6 +359,17 @@ impl Video {
                     {
                         let mut frame_guard = frame_ref.lock();
                         *frame_guard = Frame(sample);
+                    }
+
+                    // Push into frame buffer if enabled, trimming to capacity
+                    let capacity = frame_buffer_capacity_ref.load(Ordering::SeqCst);
+                    if capacity > 0 {
+                        let sample_for_buffer = frame_ref.lock().0.clone();
+                        let mut buf = frame_buffer_ref.lock();
+                        buf.push_back(Frame(sample_for_buffer));
+                        while buf.len() > capacity {
+                            buf.pop_front();
+                        }
                     }
 
                     // Always mark frame as ready for upload
@@ -425,6 +444,8 @@ impl Video {
 
             frame,
             upload_frame,
+            frame_buffer,
+            frame_buffer_capacity,
             last_frame_time,
             looping: false,
             is_eos,
@@ -561,5 +582,48 @@ impl Video {
     /// Returns true if a new frame arrived since last check and resets the flag.
     pub fn take_frame_ready(&self) -> bool {
         self.read().upload_frame.swap(false, Ordering::SeqCst)
+    }
+
+    /// Configure the frame buffer capacity (0 disables buffering).
+    pub fn set_frame_buffer_capacity(&self, capacity: usize) {
+        let inner = self.read();
+        inner
+            .frame_buffer_capacity
+            .store(capacity, Ordering::SeqCst);
+        if capacity == 0 {
+            inner.frame_buffer.lock().clear();
+        } else {
+            let mut buf = inner.frame_buffer.lock();
+            while buf.len() > capacity {
+                buf.pop_front();
+            }
+        }
+    }
+
+    /// Retrieve the current frame buffer capacity.
+    pub fn frame_buffer_capacity(&self) -> usize {
+        self.read().frame_buffer_capacity.load(Ordering::SeqCst)
+    }
+
+    /// Pop the oldest buffered frame, returning raw NV12 bytes with width/height.
+    /// Returns None if the buffer is empty or mapping fails.
+    pub fn pop_buffered_frame(&self) -> Option<(Vec<u8>, u32, u32)> {
+        let (width, height) = self.size();
+        let inner = self.read();
+        let maybe_frame = inner.frame_buffer.lock().pop_front();
+        if let Some(frame) = maybe_frame {
+            if let Some(readable) = frame.readable() {
+                let data = readable.as_slice().to_vec();
+                if !data.is_empty() {
+                    return Some((data, width as u32, height as u32));
+                }
+            }
+        }
+        None
+    }
+
+    /// Number of frames currently buffered.
+    pub fn buffered_len(&self) -> usize {
+        self.read().frame_buffer.lock().len()
     }
 }

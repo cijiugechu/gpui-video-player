@@ -20,7 +20,11 @@ impl Render for ElementPlayerExample {
             .flex()
             .items_center()
             .justify_center()
-            .child(video(self.video.clone()).id("main-video"))
+            .child(
+                video(self.video.clone())
+                    .id("main-video")
+                    .buffer_capacity(30),
+            )
     }
 }
 

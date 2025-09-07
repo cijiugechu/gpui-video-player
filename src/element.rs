@@ -33,6 +33,13 @@ impl VideoElement {
         self
     }
 
+    /// Configure how many frames to buffer inside the underlying `Video`.
+    /// 0 disables buffering and behaves like immediate rendering.
+    pub fn buffer_capacity(self, capacity: usize) -> Self {
+        self.video.set_frame_buffer_capacity(capacity);
+        self
+    }
+
     /// Get the current display dimensions, falling back to video natural size.
     fn get_display_size(&self) -> (gpui::Pixels, gpui::Pixels) {
         match (self.display_width, self.display_height) {
@@ -182,8 +189,30 @@ impl Element for VideoElement {
         window: &mut Window,
         _cx: &mut gpui::App,
     ) {
-        // Get the current frame data and render it
-        if let Some((yuv_data, frame_width, frame_height)) = self.video.current_frame_data() {
+        // Prefer buffered frames if available. Drain to the latest to avoid lag.
+        let buffered = self.video.buffered_len();
+        let mut frame_to_render: Option<(Vec<u8>, u32, u32)> = None;
+        let mut from_buffer = false;
+        if buffered > 0 {
+            for _ in 0..buffered {
+                if let Some(frame) = self.video.pop_buffered_frame() {
+                    frame_to_render = Some(frame);
+                }
+            }
+            from_buffer = frame_to_render.is_some();
+        } else {
+            frame_to_render = self.video.current_frame_data();
+        }
+
+        if let Some((yuv_data, frame_width, frame_height)) = frame_to_render {
+            if from_buffer {
+                log::debug!(
+                    "Painting frame from buffer (buffered_len before drain: {})",
+                    buffered
+                );
+            } else {
+                log::debug!("Painting frame from live current_frame_data()");
+            }
             let rgb_data = self.yuv_to_rgb(&yuv_data, frame_width, frame_height);
 
             // Create GPUI image from RGB data
