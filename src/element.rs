@@ -1,4 +1,3 @@
-use std::sync::Arc;
 use crate::video::Video;
 #[cfg(target_os = "macos")]
 use core_foundation::{
@@ -9,9 +8,12 @@ use core_foundation::{
 };
 #[cfg(target_os = "macos")]
 use core_video::pixel_buffer::{CVPixelBuffer, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange};
+#[cfg(target_os = "macos")]
+use core_video::r#return::kCVReturnSuccess;
 use gpui::{
     Element, ElementId, GlobalElementId, InspectorElementId, IntoElement, LayoutId, Window,
 };
+use std::sync::Arc;
 use yuv::{YuvBiPlanarImage, YuvConversionMode, YuvRange, YuvStandardMatrix, yuv_nv12_to_bgra};
 
 /// A video element that implements Element trait similar to GPUI's img element
@@ -77,6 +79,183 @@ impl VideoElement {
                 (gpui::px(w as f32), gpui::px(h as f32))
             }
         }
+    }
+
+    /// Compute aspect-fit destination bounds inside the given container `bounds`.
+    fn fitted_bounds(
+        &self,
+        bounds: gpui::Bounds<gpui::Pixels>,
+        frame_width: u32,
+        frame_height: u32,
+    ) -> gpui::Bounds<gpui::Pixels> {
+        let container_w = bounds.size.width.0;
+        let container_h = bounds.size.height.0;
+        let frame_w = frame_width as f32;
+        let frame_h = frame_height as f32;
+
+        let scale = if frame_w > 0.0 && frame_h > 0.0 {
+            (container_w / frame_w).min(container_h / frame_h)
+        } else {
+            1.0
+        };
+
+        let dest_w = (frame_w * scale).max(0.0);
+        let dest_h = (frame_h * scale).max(0.0);
+        let offset_x = (container_w - dest_w) * 0.5;
+        let offset_y = (container_h - dest_h) * 0.5;
+
+        gpui::Bounds::new(
+            gpui::point(
+                bounds.origin.x + gpui::px(offset_x),
+                bounds.origin.y + gpui::px(offset_y),
+            ),
+            gpui::size(gpui::px(dest_w), gpui::px(dest_h)),
+        )
+    }
+
+    /// Paint using GPUI sprite atlas with a BGRA buffer, while evicting the previous frame's texture.
+    fn paint_render_image(
+        &mut self,
+        window: &mut Window,
+        cx: &mut gpui::App,
+        bounds: gpui::Bounds<gpui::Pixels>,
+        rgb_data: Vec<u8>,
+        frame_width: u32,
+        frame_height: u32,
+    ) {
+        use image::{ImageBuffer, Rgba};
+        use smallvec::SmallVec;
+
+        if let Some(image_buffer) =
+            ImageBuffer::<Rgba<u8>, _>::from_raw(frame_width, frame_height, rgb_data)
+        {
+            let frames: SmallVec<[image::Frame; 1]> =
+                SmallVec::from_elem(image::Frame::new(image_buffer), 1);
+            let render_image = Arc::new(gpui::RenderImage::new(frames));
+
+            let dest_bounds = self.fitted_bounds(bounds, frame_width, frame_height);
+
+            // Swap and remember the previous image so we can drop it after painting
+            let prev_image: Option<Arc<gpui::RenderImage>> =
+                self.last_render_image.replace(render_image.clone());
+
+            // Paint the image within the fitted bounds (letterboxed/pillarboxed)
+            window
+                .paint_image(
+                    dest_bounds,
+                    gpui::Corners::default(),
+                    render_image.clone(),
+                    0,
+                    false,
+                )
+                .ok();
+
+            // Drop the previously uploaded image after painting to avoid atlas growth
+            if let Some(prev) = prev_image {
+                cx.drop_image(prev, Some(window));
+            }
+        }
+    }
+
+    /// macOS-only: Try to render NV12 via CVPixelBuffer and paint_surface. Returns true if painted.
+    #[cfg(target_os = "macos")]
+    fn try_paint_surface_macos(
+        &mut self,
+        window: &mut Window,
+        bounds: gpui::Bounds<gpui::Pixels>,
+        yuv_data: &[u8],
+        frame_width: u32,
+        frame_height: u32,
+    ) -> bool {
+        let width = frame_width as usize;
+        let height = frame_height as usize;
+        let y_size = width * height;
+        let uv_size = (width * height) / 2;
+        if yuv_data.len() < y_size + uv_size || width == 0 || height == 0 {
+            return false;
+        }
+
+        // Build attributes: Metal compatible + backed by IOSurface
+        let mut attrs: CFMutableDictionary<CFString, core_foundation::base::CFType> =
+            CFMutableDictionary::new();
+        attrs.add(
+            &core_video::pixel_buffer::CVPixelBufferKeys::MetalCompatibility.into(),
+            &CFBoolean::true_value().as_CFType(),
+        );
+        let empty_iosurf: CFDictionary<CFString, core_foundation::base::CFType> =
+            CFDictionary::from_CFType_pairs(&[]);
+        attrs.add(
+            &core_video::pixel_buffer::CVPixelBufferKeys::IOSurfaceProperties.into(),
+            &empty_iosurf.as_CFType(),
+        );
+
+        let Ok(pixel_buffer) = CVPixelBuffer::new(
+            kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+            width,
+            height,
+            Some(&attrs.to_immutable()),
+        ) else {
+            return false;
+        };
+
+        // Validate pixel buffer layout before unsafe copies; fall back if anything is off.
+        let pf = pixel_buffer.get_pixel_format();
+        if pf != kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+            || !pixel_buffer.is_planar()
+            || pixel_buffer.get_plane_count() != 2
+        {
+            return false;
+        }
+        let y_w = pixel_buffer.get_width_of_plane(0);
+        let y_h = pixel_buffer.get_height_of_plane(0);
+        let uv_w = pixel_buffer.get_width_of_plane(1);
+        let uv_h = pixel_buffer.get_height_of_plane(1);
+        let y_stride = pixel_buffer.get_bytes_per_row_of_plane(0);
+        let uv_stride = pixel_buffer.get_bytes_per_row_of_plane(1);
+
+        if !(y_w == width
+            && y_h == height
+            && uv_w == width / 2
+            && uv_h == height / 2
+            && y_stride >= width
+            && uv_stride >= width)
+        {
+            return false;
+        }
+
+        if pixel_buffer.lock_base_address(0) != kCVReturnSuccess {
+            return false;
+        }
+        unsafe {
+            let y_dst = pixel_buffer.get_base_address_of_plane(0) as *mut u8;
+            let uv_dst = pixel_buffer.get_base_address_of_plane(1) as *mut u8;
+
+            // Copy Y plane row-wise respecting stride
+            for row in 0..height {
+                let src_off = row * width;
+                let dst_off = row * y_stride;
+                std::ptr::copy_nonoverlapping(
+                    yuv_data.as_ptr().add(src_off),
+                    y_dst.add(dst_off),
+                    width,
+                );
+            }
+            // Copy UV plane
+            for row in 0..(height / 2) {
+                let src_off = y_size + row * width;
+                let dst_off = row * uv_stride;
+                std::ptr::copy_nonoverlapping(
+                    yuv_data.as_ptr().add(src_off),
+                    uv_dst.add(dst_off),
+                    width,
+                );
+            }
+        }
+        let _ = pixel_buffer.unlock_base_address(0);
+
+        let dest_bounds = self.fitted_bounds(bounds, frame_width, frame_height);
+        window.paint_surface(dest_bounds, pixel_buffer);
+        true
     }
 
     /// Convert NV12 YUV data to RGB using optimized yuvutils-rs
@@ -256,129 +435,19 @@ impl Element for VideoElement {
             // On macOS, upload via CVPixelBuffer + paint_surface to avoid atlas growth
             #[cfg(target_os = "macos")]
             {
-                let width = frame_width as usize;
-                let height = frame_height as usize;
-                let y_size = width * height;
-                let uv_size = (width * height) / 2;
-                if yuv_data.len() >= y_size + uv_size && width > 0 && height > 0 {
-                    // Build attributes: Metal compatible + backed by IOSurface
-                    let mut attrs: CFMutableDictionary<CFString, core_foundation::base::CFType> =
-                        CFMutableDictionary::new();
-                    attrs.add(
-                        &core_video::pixel_buffer::CVPixelBufferKeys::MetalCompatibility.into(),
-                        &CFBoolean::true_value().as_CFType(),
-                    );
-                    let empty_iosurf: CFDictionary<CFString, core_foundation::base::CFType> =
-                        CFDictionary::from_CFType_pairs(&[]);
-                    attrs.add(
-                        &core_video::pixel_buffer::CVPixelBufferKeys::IOSurfaceProperties.into(),
-                        &empty_iosurf.as_CFType(),
-                    );
-
-                    if let Ok(pixel_buffer) = CVPixelBuffer::new(
-                        kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
-                        width,
-                        height,
-                        Some(&attrs.to_immutable()),
-                    ) {
-                        // Copy NV12 planes into pixel buffer
-                        let _ = pixel_buffer.lock_base_address(0);
-                        unsafe {
-                            let y_dst = pixel_buffer.get_base_address_of_plane(0) as *mut u8;
-                            std::ptr::copy_nonoverlapping(yuv_data.as_ptr(), y_dst, y_size);
-                            let uv_dst = pixel_buffer.get_base_address_of_plane(1) as *mut u8;
-                            std::ptr::copy_nonoverlapping(
-                                yuv_data.as_ptr().add(y_size),
-                                uv_dst,
-                                uv_size,
-                            );
-                        }
-                        let _ = pixel_buffer.unlock_base_address(0);
-                        // Compute aspect-fit bounds
-                        let container_w = bounds.size.width.0;
-                        let container_h = bounds.size.height.0;
-                        let frame_w = frame_width as f32;
-                        let frame_h = frame_height as f32;
-                        let scale = if frame_w > 0.0 && frame_h > 0.0 {
-                            (container_w / frame_w).min(container_h / frame_h)
-                        } else {
-                            1.0
-                        };
-                        let dest_w = (frame_w * scale).max(0.0);
-                        let dest_h = (frame_h * scale).max(0.0);
-                        let offset_x = (container_w - dest_w) * 0.5;
-                        let offset_y = (container_h - dest_h) * 0.5;
-                        let dest_bounds = gpui::Bounds::new(
-                            gpui::point(
-                                bounds.origin.x + gpui::px(offset_x),
-                                bounds.origin.y + gpui::px(offset_y),
-                            ),
-                            gpui::size(gpui::px(dest_w), gpui::px(dest_h)),
-                        );
-                        window.paint_surface(dest_bounds, pixel_buffer);
-                        return;
-                    }
+                if self.try_paint_surface_macos(
+                    window,
+                    bounds,
+                    &yuv_data,
+                    frame_width,
+                    frame_height,
+                ) {
+                    return;
                 }
             }
 
             let rgb_data = self.yuv_to_rgb(&yuv_data, frame_width, frame_height);
-
-            // Create GPUI image from RGB data
-            use image::{ImageBuffer, Rgba};
-            use smallvec::SmallVec;
-
-            if let Some(image_buffer) =
-                ImageBuffer::<Rgba<u8>, _>::from_raw(frame_width, frame_height, rgb_data)
-            {
-                let frames: SmallVec<[image::Frame; 1]> =
-                    SmallVec::from_elem(image::Frame::new(image_buffer), 1);
-                let render_image = Arc::new(gpui::RenderImage::new(frames));
-
-                // Compute aspect-fit bounds inside the provided bounds to avoid stretching
-                let container_w = bounds.size.width.0;
-                let container_h = bounds.size.height.0;
-                let frame_w = frame_width as f32;
-                let frame_h = frame_height as f32;
-
-                let scale = if frame_w > 0.0 && frame_h > 0.0 {
-                    (container_w / frame_w).min(container_h / frame_h)
-                } else {
-                    1.0
-                };
-
-                let dest_w = (frame_w * scale).max(0.0);
-                let dest_h = (frame_h * scale).max(0.0);
-                let offset_x = (container_w - dest_w) * 0.5;
-                let offset_y = (container_h - dest_h) * 0.5;
-
-                let dest_bounds = gpui::Bounds::new(
-                    gpui::point(
-                        bounds.origin.x + gpui::px(offset_x),
-                        bounds.origin.y + gpui::px(offset_y),
-                    ),
-                    gpui::size(gpui::px(dest_w), gpui::px(dest_h)),
-                );
-
-                // Swap and remember the previous image so we can drop it after painting
-                let prev_image: Option<std::sync::Arc<gpui::RenderImage>> =
-                    self.last_render_image.replace(render_image.clone());
-
-                // Paint the image within the fitted bounds (letterboxed/pillarboxed)
-                window
-                    .paint_image(
-                        dest_bounds,
-                        gpui::Corners::default(),
-                        render_image.clone(),
-                        0,
-                        false,
-                    )
-                    .ok();
-
-                // Drop the previously uploaded image after painting to avoid atlas growth
-                if let Some(prev) = prev_image {
-                    cx.drop_image(prev, Some(window));
-                }
-            }
+            self.paint_render_image(window, cx, bounds, rgb_data, frame_width, frame_height);
         }
     }
 }
