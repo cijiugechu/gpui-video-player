@@ -3,9 +3,7 @@ use gpui::{
     Context, Element, ElementId, GlobalElementId, InspectorElementId, IntoElement, LayoutId,
     ParentElement, Render, Styled, Window, div, prelude::StyledImage as _,
 };
-use yuv::{
-    YuvBiPlanarImage, YuvConversionMode, YuvRange, YuvStandardMatrix, yuv_nv12_to_rgba,
-};
+use yuv::{YuvBiPlanarImage, YuvConversionMode, YuvRange, YuvStandardMatrix, yuv_nv12_to_rgba};
 
 /// Advanced GPU-based video renderer that converts YUV to RGB on CPU as fallback
 /// This provides a working solution while we develop full GPU integration
