@@ -2,7 +2,7 @@ use crate::video::Video;
 use gpui::{
     Element, ElementId, GlobalElementId, InspectorElementId, IntoElement, LayoutId, Window,
 };
-use yuv::{YuvBiPlanarImage, YuvConversionMode, YuvRange, YuvStandardMatrix, yuv_nv12_to_rgba};
+use yuv::{YuvBiPlanarImage, YuvConversionMode, YuvRange, YuvStandardMatrix, yuv_nv12_to_bgra};
 
 /// A video element that implements Element trait similar to GPUI's img element
 pub struct VideoElement {
@@ -70,45 +70,45 @@ impl VideoElement {
             height,
         };
 
-        // Prepare output RGB buffer (RGBA format)
-        let mut rgba = vec![0u8; width_usize * height_usize * 4];
+        // Prepare output RGB buffer (BGRA format)
+        let mut bgra = vec![0u8; width_usize * height_usize * 4];
         let rgba_stride = width * 4;
 
         // Use yuvutils-rs optimized NV12 to RGB conversion
         // Try Bt709 first (HD standard) with full range
-        if let Ok(_) = yuv_nv12_to_rgba(
+        if let Ok(_) = yuv_nv12_to_bgra(
             &yuv_bi_planar,
-            &mut rgba,
+            &mut bgra,
             rgba_stride,
             YuvRange::Full,              // Try full range first
             YuvStandardMatrix::Bt709,    // HD standard
             YuvConversionMode::Balanced, // Use balanced conversion mode (default)
         ) {
-            return rgba;
+            return bgra;
         }
 
         // Try Bt709 with limited range
-        if let Ok(_) = yuv_nv12_to_rgba(
+        if let Ok(_) = yuv_nv12_to_bgra(
             &yuv_bi_planar,
-            &mut rgba,
+            &mut bgra,
             rgba_stride,
             YuvRange::Limited,           // Limited range
             YuvStandardMatrix::Bt709,    // HD standard
             YuvConversionMode::Balanced, // Use balanced conversion mode (default)
         ) {
-            return rgba;
+            return bgra;
         }
 
         // Fallback to Bt601 (SD standard)
-        match yuv_nv12_to_rgba(
+        match yuv_nv12_to_bgra(
             &yuv_bi_planar,
-            &mut rgba,
+            &mut bgra,
             rgba_stride,
             YuvRange::Limited,
             YuvStandardMatrix::Bt601,
             YuvConversionMode::Balanced, // Use balanced conversion mode (default)
         ) {
-            Ok(_) => rgba,
+            Ok(_) => bgra,
             Err(_) => {
                 // Final fallback to black frame on conversion error
                 vec![0; width_usize * height_usize * 4]
