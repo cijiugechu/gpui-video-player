@@ -232,7 +232,7 @@ impl Video {
     ) -> Result<Self, Error> {
         gst::init()?;
         static NEXT_ID: AtomicU64 = AtomicU64::new(0);
-        let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
+        let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
 
         macro_rules! cleanup {
             ($expr:expr) => {
