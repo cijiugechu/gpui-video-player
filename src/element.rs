@@ -33,6 +33,20 @@ impl VideoElement {
         self
     }
 
+    /// Set only width; height is inferred via aspect ratio.
+    pub fn width(mut self, width: gpui::Pixels) -> Self {
+        self.display_width = Some(width);
+        self.display_height = None;
+        self
+    }
+
+    /// Set only height; width is inferred via aspect ratio.
+    pub fn height(mut self, height: gpui::Pixels) -> Self {
+        self.display_height = Some(height);
+        self.display_width = None;
+        self
+    }
+
     /// Configure how many frames to buffer inside the underlying `Video`.
     /// 0 disables buffering and behaves like immediate rendering.
     pub fn buffer_capacity(self, capacity: usize) -> Self {
@@ -40,13 +54,13 @@ impl VideoElement {
         self
     }
 
-    /// Get the current display dimensions, falling back to video natural size.
+    /// Get the current display dimensions, falling back to video's effective display size.
     fn get_display_size(&self) -> (gpui::Pixels, gpui::Pixels) {
         match (self.display_width, self.display_height) {
             (Some(w), Some(h)) => (w, h),
             _ => {
-                let (video_width, video_height) = self.video.size();
-                (gpui::px(video_width as f32), gpui::px(video_height as f32))
+                let (w, h) = self.video.display_size();
+                (gpui::px(w as f32), gpui::px(h as f32))
             }
         }
     }
@@ -143,7 +157,18 @@ impl Element for VideoElement {
         window: &mut Window,
         cx: &mut gpui::App,
     ) -> (LayoutId, Self::RequestLayoutState) {
-        let (width, height) = self.get_display_size();
+        let (mut width, mut height) = self.get_display_size();
+
+        // Also honor any video-level display overrides if element-level not specified
+        if self.display_width.is_none() || self.display_height.is_none() {
+            let (vw, vh) = self.video.display_size();
+            if self.display_width.is_none() {
+                width = gpui::px(vw as f32);
+            }
+            if self.display_height.is_none() {
+                height = gpui::px(vh as f32);
+            }
+        }
 
         let style = gpui::Style {
             size: gpui::Size {
@@ -226,14 +251,39 @@ impl Element for VideoElement {
                     SmallVec::from_elem(image::Frame::new(image_buffer), 1);
                 let render_image = std::sync::Arc::new(gpui::RenderImage::new(frames));
 
-                // Paint the image to fill the bounds
+                // Compute aspect-fit bounds inside the provided bounds to avoid stretching
+                let container_w = bounds.size.width.0;
+                let container_h = bounds.size.height.0;
+                let frame_w = frame_width as f32;
+                let frame_h = frame_height as f32;
+
+                let scale = if frame_w > 0.0 && frame_h > 0.0 {
+                    (container_w / frame_w).min(container_h / frame_h)
+                } else {
+                    1.0
+                };
+
+                let dest_w = (frame_w * scale).max(0.0);
+                let dest_h = (frame_h * scale).max(0.0);
+                let offset_x = (container_w - dest_w) * 0.5;
+                let offset_y = (container_h - dest_h) * 0.5;
+
+                let dest_bounds = gpui::Bounds::new(
+                    gpui::point(
+                        bounds.origin.x + gpui::px(offset_x),
+                        bounds.origin.y + gpui::px(offset_y),
+                    ),
+                    gpui::size(gpui::px(dest_w), gpui::px(dest_h)),
+                );
+
+                // Paint the image within the fitted bounds (letterboxed/pillarboxed)
                 window
                     .paint_image(
-                        bounds,
+                        dest_bounds,
                         gpui::Corners::default(),
                         render_image,
-                        0,     // frame index
-                        false, // grayscale
+                        0,
+                        false,
                     )
                     .ok();
             }

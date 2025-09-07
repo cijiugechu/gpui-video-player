@@ -54,6 +54,27 @@ impl Frame {
     }
 }
 
+/// Options for initializing a `Video` without post-construction locking.
+#[derive(Debug, Clone)]
+pub struct VideoOptions {
+    /// Optional initial frame buffer capacity (0 disables buffering). Defaults to 3.
+    pub frame_buffer_capacity: Option<usize>,
+    /// Optional initial looping flag. Defaults to false.
+    pub looping: Option<bool>,
+    /// Optional initial playback speed. Defaults to 1.0.
+    pub speed: Option<f64>,
+}
+
+impl Default for VideoOptions {
+    fn default() -> Self {
+        Self {
+            frame_buffer_capacity: Some(3),
+            looping: Some(false),
+            speed: Some(1.0),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct Internal {
     pub(crate) id: u64,
@@ -79,6 +100,11 @@ pub(crate) struct Internal {
 
     pub(crate) subtitle_text: Arc<Mutex<Option<String>>>,
     pub(crate) upload_text: Arc<AtomicBool>,
+
+    // Optional display size overrides. If only one is set, the other is
+    // inferred using the natural aspect ratio (width / height).
+    pub(crate) display_width_override: Option<u32>,
+    pub(crate) display_height_override: Option<u32>,
 }
 
 impl Internal {
@@ -204,6 +230,12 @@ impl Drop for Video {
 impl Video {
     /// Create a new video player from a given video which loads from `uri`.
     pub fn new(uri: &url::Url) -> Result<Self, Error> {
+        Self::new_with_options(uri, VideoOptions::default())
+    }
+
+    /// Create a new video player from a given video which loads from `uri`,
+    /// applying initialization options.
+    pub fn new_with_options(uri: &url::Url, options: VideoOptions) -> Result<Self, Error> {
         gst::init()?;
 
         let pipeline = format!(
@@ -225,7 +257,7 @@ impl Video {
         let video_sink = bin.by_name("gpui_video").unwrap();
         let video_sink = video_sink.downcast::<gst_app::AppSink>().unwrap();
 
-        Self::from_gst_pipeline(pipeline, video_sink, None)
+        Self::from_gst_pipeline_with_options(pipeline, video_sink, None, options)
     }
 
     /// Creates a new video based on an existing GStreamer pipeline and appsink.
@@ -233,6 +265,22 @@ impl Video {
         pipeline: gst::Pipeline,
         video_sink: gst_app::AppSink,
         text_sink: Option<gst_app::AppSink>,
+    ) -> Result<Self, Error> {
+        Self::from_gst_pipeline_with_options(
+            pipeline,
+            video_sink,
+            text_sink,
+            VideoOptions::default(),
+        )
+    }
+
+    /// Creates a new video based on an existing GStreamer pipeline and appsink,
+    /// applying initialization options.
+    pub fn from_gst_pipeline_with_options(
+        pipeline: gst::Pipeline,
+        video_sink: gst_app::AppSink,
+        text_sink: Option<gst_app::AppSink>,
+        options: VideoOptions,
     ) -> Result<Self, Error> {
         gst::init()?;
         static NEXT_ID: AtomicU64 = AtomicU64::new(0);
@@ -286,7 +334,9 @@ impl Video {
         let upload_frame = Arc::new(AtomicBool::new(false));
         let frame_buffer = Arc::new(Mutex::new(VecDeque::new()));
         // Default to a small buffer so the element can consume buffered frames
-        let frame_buffer_capacity = Arc::new(AtomicUsize::new(3));
+        let frame_buffer_capacity = Arc::new(AtomicUsize::new(
+            options.frame_buffer_capacity.unwrap_or_default(),
+        ));
         let alive = Arc::new(AtomicBool::new(true));
         let last_frame_time = Arc::new(Mutex::new(Instant::now()));
 
@@ -429,6 +479,35 @@ impl Video {
             }
         });
 
+        // Apply initial playback speed if specified (must be after pipeline started)
+        let initial_speed = options.speed.unwrap_or_default();
+        if (initial_speed - 1.0).abs() > f64::EPSILON {
+            let position = cleanup!(
+                pipeline
+                    .query_position::<gst::ClockTime>()
+                    .ok_or(Error::Caps)
+            )?;
+            if initial_speed > 0.0 {
+                cleanup!(pipeline.seek(
+                    initial_speed,
+                    gst::SeekFlags::FLUSH | gst::SeekFlags::ACCURATE,
+                    gst::SeekType::Set,
+                    position,
+                    gst::SeekType::End,
+                    gst::ClockTime::from_seconds(0),
+                ))?;
+            } else {
+                cleanup!(pipeline.seek(
+                    initial_speed,
+                    gst::SeekFlags::FLUSH | gst::SeekFlags::ACCURATE,
+                    gst::SeekType::Set,
+                    gst::ClockTime::from_seconds(0),
+                    gst::SeekType::Set,
+                    position,
+                ))?;
+            }
+        }
+
         Ok(Video(Arc::new(RwLock::new(Internal {
             id,
             bus: pipeline.bus().unwrap(),
@@ -440,19 +519,22 @@ impl Video {
             height,
             framerate,
             duration,
-            speed: 1.0,
+            speed: initial_speed,
 
             frame,
             upload_frame,
             frame_buffer,
             frame_buffer_capacity,
             last_frame_time,
-            looping: false,
+            looping: options.looping.unwrap_or_default(),
             is_eos,
             restart_stream: false,
 
             subtitle_text,
             upload_text,
+
+            display_width_override: None,
+            display_height_override: None,
         }))))
     }
 
@@ -467,6 +549,63 @@ impl Video {
     /// Get the size/resolution of the video as `(width, height)`.
     pub fn size(&self) -> (i32, i32) {
         (self.read().width, self.read().height)
+    }
+
+    /// Get the natural aspect ratio (width / height) of the video as f32.
+    pub fn aspect_ratio(&self) -> f32 {
+        let (w, h) = self.size();
+        if w <= 0 || h <= 0 {
+            return 1.0;
+        }
+        w as f32 / h as f32
+    }
+
+    /// Set an override display width in pixels. Pass `None` to clear.
+    pub fn set_display_width(&self, width: Option<u32>) {
+        self.write().display_width_override = width;
+    }
+
+    /// Set an override display height in pixels. Pass `None` to clear.
+    pub fn set_display_height(&self, height: Option<u32>) {
+        self.write().display_height_override = height;
+    }
+
+    /// Set override display size in pixels. Any value set to `None` is cleared.
+    pub fn set_display_size(&self, width: Option<u32>, height: Option<u32>) {
+        let mut inner = self.write();
+        inner.display_width_override = width;
+        inner.display_height_override = height;
+    }
+
+    /// Get the effective display size honoring overrides. If only one of
+    /// width/height is overridden, the other is inferred from the natural
+    /// aspect ratio, rounded to nearest pixel.
+    pub fn display_size(&self) -> (u32, u32) {
+        let inner = self.read();
+        let natural_w = inner.width.max(0) as u32;
+        let natural_h = inner.height.max(0) as u32;
+        let ar = if natural_h == 0 {
+            1.0
+        } else {
+            natural_w as f32 / natural_h as f32
+        };
+
+        match (inner.display_width_override, inner.display_height_override) {
+            (Some(w), Some(h)) => (w, h),
+            (Some(w), None) => {
+                let h = if ar == 0.0 {
+                    natural_h
+                } else {
+                    (w as f32 / ar).round() as u32
+                };
+                (w, h)
+            }
+            (None, Some(h)) => {
+                let w = ((h as f32) * ar).round() as u32;
+                (w, h)
+            }
+            (None, None) => (natural_w, natural_h),
+        }
     }
 
     /// Get the framerate of the video as frames per second.
