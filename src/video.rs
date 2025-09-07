@@ -49,7 +49,7 @@ impl Frame {
         Self(gst::Sample::builder().build())
     }
 
-    pub fn readable(&self) -> Option<gst::BufferMap<gst::buffer::Readable>> {
+    pub fn readable(&'_ self) -> Option<gst::BufferMap<'_, gst::buffer::Readable>> {
         self.0.buffer().and_then(|x| x.map_readable().ok())
     }
 }
@@ -456,11 +456,11 @@ impl Video {
         }))))
     }
 
-    pub(crate) fn read(&self) -> parking_lot::RwLockReadGuard<Internal> {
+    pub(crate) fn read(&'_ self) -> parking_lot::RwLockReadGuard<'_, Internal> {
         self.0.read()
     }
 
-    pub(crate) fn write(&self) -> parking_lot::RwLockWriteGuard<Internal> {
+    pub(crate) fn write(&'_ self) -> parking_lot::RwLockWriteGuard<'_, Internal> {
         self.0.write()
     }
 
