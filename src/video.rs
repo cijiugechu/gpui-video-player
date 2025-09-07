@@ -119,7 +119,7 @@ impl Internal {
                     | if accurate {
                         gst::SeekFlags::ACCURATE
                     } else {
-                        gst::SeekFlags::empty()
+                        gst::SeekFlags::KEY_UNIT | gst::SeekFlags::SNAP_NEAREST
                     },
                 gst::SeekType::Set,
                 gst::GenericFormattedValue::from(position),
@@ -132,7 +132,7 @@ impl Internal {
                     | if accurate {
                         gst::SeekFlags::ACCURATE
                     } else {
-                        gst::SeekFlags::empty()
+                        gst::SeekFlags::KEY_UNIT | gst::SeekFlags::SNAP_NEAREST
                     },
                 gst::SeekType::Set,
                 gst::GenericFormattedValue::from(position),
@@ -143,6 +143,11 @@ impl Internal {
 
         *self.subtitle_text.lock() = None;
         self.upload_text.store(true, Ordering::SeqCst);
+
+        // Clear any buffered frames so old frames do not display after a seek,
+        // which can visually appear as a larger-than-intended jump.
+        self.frame_buffer.lock().clear();
+        self.upload_frame.store(false, Ordering::SeqCst);
 
         Ok(())
     }
@@ -297,7 +302,7 @@ impl Video {
         }
 
         // Configure sinks to prevent unbounded buffering in appsink
-        // Limit queue size and drop old buffers when full; also avoid retaining last sample
+        // Keep a small queue in the sink to allow smooth pull_sample
         video_sink.set_drop(true);
         video_sink.set_max_buffers(3);
         video_sink.set_property("enable-last-sample", false);
@@ -749,6 +754,13 @@ impl Video {
                 buf.pop_front();
             }
         }
+    }
+
+    /// Clear any buffered frames and reset the upload flag.
+    pub fn clear_frame_buffer(&self) {
+        let inner = self.read();
+        inner.frame_buffer.lock().clear();
+        inner.upload_frame.store(false, Ordering::SeqCst);
     }
 
     /// Retrieve the current frame buffer capacity.
