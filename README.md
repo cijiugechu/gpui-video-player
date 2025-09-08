@@ -2,6 +2,8 @@
 
 A video player library for [gpui](https://github.com/zed-industries/zed/tree/main/crates/gpui) applications, built on top of GStreamer. This library provides efficient video playback with hardware-accelerated rendering on supported platforms.
 
+![screenshot](./assets/screenshot.png)
+
 ## Installation
 
 ### GStreamer Dependencies
