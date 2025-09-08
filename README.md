@@ -189,3 +189,7 @@ Contributions are welcome! Please feel free to submit issues and pull requests.
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## Credits
+
+This project is inspired by and has referenced code from [iced_video_player](https://github.com/jazzfool/iced_video_player) by [@jazzfool](https://github.com/jazzfool).
