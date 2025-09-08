@@ -1,4 +1,7 @@
-use gpui::{App, Application, Context, Render, Window, WindowOptions, div, prelude::*};
+use gpui::{
+    App, Application, Context, CursorStyle, Render, Window, WindowOptions, div, prelude::*,
+};
+use gpui_component::button::Button;
 use gpui_video_player::{Video, video};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -32,36 +35,32 @@ impl WithControlsExample {
 impl Render for WithControlsExample {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let is_paused = self.video.paused();
-        let play_label = if is_paused {
-            "▶️ Play"
-        } else {
-            "⏸️ Pause"
-        };
+        let play_label = if is_paused { "▶️" } else { "⏸️" };
 
-        let back_5s = div()
-            .id("btn-back-5s")
-            .px_6()
-            .py_3()
-            .border_1()
-            .cursor_pointer()
-            .child("⏪ 5s")
+        let back_5s = Button::new("back-5s")
+            .label("⏪")
+            .cursor(CursorStyle::PointingHand)
             .on_click(cx.listener(|this: &mut Self, _event, _window, cx| {
                 if !this.click_allowed() {
                     return;
                 }
                 let pos = this.video.position();
                 let new_pos = pos.saturating_sub(Duration::from_secs(5));
-                let _ = this.video.seek(new_pos, false);
-                cx.notify();
+
+                cx.spawn(async move |handle, cx| {
+                    handle
+                        .update(cx, |this, cx| {
+                            let _ = this.video.seek(new_pos, false);
+                            cx.notify();
+                        })
+                        .ok();
+                })
+                .detach();
             }));
 
-        let play_pause = div()
-            .id("btn-play-pause")
-            .px_8()
-            .py_4()
-            .border_1()
-            .cursor_pointer()
-            .child(play_label)
+        let play_pause = Button::new("play-pause")
+            .label(play_label)
+            .cursor(CursorStyle::PointingHand)
             .on_click(cx.listener(|this: &mut Self, _event, _window, cx| {
                 if !this.click_allowed() {
                     return;
@@ -71,13 +70,9 @@ impl Render for WithControlsExample {
                 cx.notify();
             }));
 
-        let forward_5s = div()
-            .id("btn-forward-5s")
-            .px_6()
-            .py_3()
-            .border_1()
-            .cursor_pointer()
-            .child("5s ⏩")
+        let forward_5s = Button::new("forward-5s")
+            .label("⏩")
+            .cursor(CursorStyle::PointingHand)
             .on_click(cx.listener(|this: &mut Self, _event, _window, cx| {
                 if !this.click_allowed() {
                     return;
@@ -86,8 +81,16 @@ impl Render for WithControlsExample {
                 let dur = this.video.duration();
                 let target = pos.saturating_add(Duration::from_secs(5));
                 let new_pos = if target > dur { dur } else { target };
-                let _ = this.video.seek(new_pos, false);
-                cx.notify();
+
+                cx.spawn(async move |handle, cx| {
+                    handle
+                        .update(cx, |this, cx| {
+                            let _ = this.video.seek(new_pos, false);
+                            cx.notify();
+                        })
+                        .ok();
+                })
+                .detach();
             }));
 
         div()
@@ -138,6 +141,8 @@ fn main() {
                 ..Default::default()
             },
             |_, cx| {
+                gpui_component::init(cx);
+
                 let video = Video::new(&uri).expect("failed to create video");
                 cx.new(|_| WithControlsExample::new(video))
             },
