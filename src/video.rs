@@ -112,31 +112,38 @@ impl Internal {
     pub(crate) fn seek(&self, position: impl Into<Position>, accurate: bool) -> Result<(), Error> {
         let position = position.into();
 
+        // Clear EOS so the worker resumes pulling after a seek.
+        self.is_eos.store(false, Ordering::SeqCst);
+
+        // Build seek flags. When not accurate, snap in the playback direction to
+        // avoid jumping backward to a previous keyframe.
+        let mut flags = gst::SeekFlags::FLUSH;
+        if accurate {
+            flags |= gst::SeekFlags::ACCURATE;
+        } else {
+            flags |= gst::SeekFlags::KEY_UNIT;
+            if self.speed >= 0.0 {
+                flags |= gst::SeekFlags::SNAP_AFTER;
+            } else {
+                flags |= gst::SeekFlags::SNAP_BEFORE;
+            }
+        }
+
         match &position {
             Position::Time(_) => self.source.seek(
                 self.speed,
-                gst::SeekFlags::FLUSH
-                    | if accurate {
-                        gst::SeekFlags::ACCURATE
-                    } else {
-                        gst::SeekFlags::KEY_UNIT | gst::SeekFlags::SNAP_NEAREST
-                    },
+                flags,
                 gst::SeekType::Set,
                 gst::GenericFormattedValue::from(position),
-                gst::SeekType::Set,
+                gst::SeekType::None,
                 gst::ClockTime::NONE,
             )?,
             Position::Frame(_) => self.source.seek(
                 self.speed,
-                gst::SeekFlags::FLUSH
-                    | if accurate {
-                        gst::SeekFlags::ACCURATE
-                    } else {
-                        gst::SeekFlags::KEY_UNIT | gst::SeekFlags::SNAP_NEAREST
-                    },
+                flags,
                 gst::SeekType::Set,
                 gst::GenericFormattedValue::from(position),
-                gst::SeekType::Set,
+                gst::SeekType::None,
                 gst::format::Default::NONE,
             )?,
         };
