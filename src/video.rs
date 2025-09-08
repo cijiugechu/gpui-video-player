@@ -756,13 +756,6 @@ impl Video {
         }
     }
 
-    /// Clear any buffered frames and reset the upload flag.
-    pub fn clear_frame_buffer(&self) {
-        let inner = self.read();
-        inner.frame_buffer.lock().clear();
-        inner.upload_frame.store(false, Ordering::SeqCst);
-    }
-
     /// Retrieve the current frame buffer capacity.
     pub fn frame_buffer_capacity(&self) -> usize {
         self.read().frame_buffer_capacity.load(Ordering::SeqCst)

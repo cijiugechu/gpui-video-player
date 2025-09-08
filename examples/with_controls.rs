@@ -52,7 +52,6 @@ impl Render for WithControlsExample {
                 let pos = this.video.position();
                 let new_pos = pos.saturating_sub(Duration::from_secs(5));
                 let _ = this.video.seek(new_pos, false);
-                this.video.clear_frame_buffer();
                 cx.notify();
             }));
 
@@ -88,7 +87,6 @@ impl Render for WithControlsExample {
                 let target = pos.saturating_add(Duration::from_secs(5));
                 let new_pos = if target > dur { dur } else { target };
                 let _ = this.video.seek(new_pos, false);
-                this.video.clear_frame_buffer();
                 cx.notify();
             }));
 
