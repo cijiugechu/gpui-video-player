@@ -88,8 +88,8 @@ impl VideoElement {
         frame_width: u32,
         frame_height: u32,
     ) -> gpui::Bounds<gpui::Pixels> {
-        let container_w = bounds.size.width.0;
-        let container_h = bounds.size.height.0;
+        let container_w: f32 = bounds.size.width.into();
+        let container_h: f32 = bounds.size.height.into();
         let frame_w = frame_width as f32;
         let frame_h = frame_height as f32;
 

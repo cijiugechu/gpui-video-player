@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-gpui = { git = "https://github.com/zed-industries/zed.git" }
+gpui = "0.2"
 gstreamer = "0.24"
 gstreamer-app = "0.24" # appsink
 gstreamer-base = "0.24" # basesrc
@@ -24,4 +24,4 @@ core-foundation = "0.10"
 
 [dev-dependencies]
 env_logger = "0.11"
-gpui-component = { git = "https://github.com/longbridge/gpui-component.git" }
+gpui-component = "0.2"
