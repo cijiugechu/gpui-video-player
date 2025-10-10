@@ -22,7 +22,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-gpui-video-player = { git = "https://github.com/cijiugechu/gpui-video-player.git" }
+gpui-video-player = "0.1.0"
 ```
 
 **Note:** This library depends on GPUI, which must be available in your project. The current version requires GPUI from the Zed repository.

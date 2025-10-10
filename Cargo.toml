@@ -2,6 +2,16 @@
 name = "gpui-video-player"
 version = "0.1.0"
 edition = "2024"
+exclude = ["assets"]
+authors = ["nemurubaka <cijiugechu@gmail.com>"]
+description = "A video player library for gpui applications, built on top of GStreamer."
+homepage = "https://github.com/cijiugechu/gpui-video-player"
+repository = "https://github.com/cijiugechu/gpui-video-player"
+license = "MIT"
+readme = "README.md"
+keywords = ["gpui", "video", "player", "gstreamer"]
+categories = ["multimedia"]
+documentation = "https://docs.rs/gpui-video-player"
 
 [dependencies]
 gpui = "0.2"
