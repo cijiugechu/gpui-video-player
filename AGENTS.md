@@ -12,6 +12,7 @@
   - Example: avoid `let _ = client.request(...).await?;` - use `client.request(...).await?;` instead
 * When implementing async operations that may fail, ensure errors propagate to the UI layer so users get meaningful feedback.
 * Never create files with `mod.rs` paths - prefer `src/some_module.rs` instead of `src/some_module/mod.rs`.
+* Run `cargo check --all-features` and `cargo clippy` automatically after making code changes.
 
 # GPUI
 
