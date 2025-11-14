@@ -22,9 +22,6 @@ pub struct VideoElement {
     display_width: Option<gpui::Pixels>,
     display_height: Option<gpui::Pixels>,
     element_id: Option<ElementId>,
-    // Retain the last RenderImage to explicitly drop it before uploading a new one,
-    // preventing accumulation in GPUI's sprite atlas.
-    last_render_image: Option<Arc<gpui::RenderImage>>,
 }
 
 impl VideoElement {
@@ -34,7 +31,6 @@ impl VideoElement {
             display_width: None,
             display_height: None,
             element_id: None,
-            last_render_image: None,
         }
     }
 
@@ -129,6 +125,9 @@ impl VideoElement {
         if let Some(image_buffer) =
             ImageBuffer::<Rgba<u8>, _>::from_raw(frame_width, frame_height, rgb_data)
         {
+            let last_render_image: gpui::Entity<Option<Arc<gpui::RenderImage>>> =
+                window.use_state(cx, |_, _| None);
+
             let frames: SmallVec<[image::Frame; 1]> =
                 SmallVec::from_elem(image::Frame::new(image_buffer), 1);
             let render_image = Arc::new(gpui::RenderImage::new(frames));
@@ -137,7 +136,7 @@ impl VideoElement {
 
             // Swap and remember the previous image so we can drop it after painting
             let prev_image: Option<Arc<gpui::RenderImage>> =
-                self.last_render_image.replace(render_image.clone());
+                last_render_image.update(cx, |this, _| this.replace(render_image.clone()));
 
             // Paint the image within the fitted bounds (letterboxed/pillarboxed)
             window
