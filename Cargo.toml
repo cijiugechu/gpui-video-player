@@ -21,7 +21,7 @@ gstreamer-base = "0.24" # basesrc
 gstreamer-video = "0.24" # video info/frames (stride-aware copies)
 glib = "0.21" # gobject traits and error type
 log = "0.4"
-thiserror = "1"
+thiserror = "2"
 url = "2" # media uri
 parking_lot = "0.12"
 image = { version = "0.25", default-features = false, features = ["png", "gif", "webp"] }
