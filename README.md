@@ -117,6 +117,24 @@ let options = VideoOptions {
 let video = Video::new_with_options(&uri, options)?;
 ```
 
+### Looping Playback Example
+
+```rust
+use gpui_video_player::{Video, VideoOptions};
+
+let looped_video = Video::new_with_options(
+    &uri,
+    VideoOptions {
+        looping: Some(true),
+        ..VideoOptions::default()
+    },
+)?;
+
+looped_video.set_looping(true);
+```
+
+Call `set_looping(true)` at runtime whenever you want to ensure the current stream loops.
+
 ### Custom Video Element
 
 ```rust
@@ -171,6 +189,9 @@ cargo run --example video_player
 
 # Video player with controls
 cargo run --example with_controls
+
+# Looping playback
+cargo run --example looping
 ```
 
 ## Platform Notes

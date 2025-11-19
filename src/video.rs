@@ -88,14 +88,14 @@ pub(crate) struct Internal {
     pub(crate) height: i32,
     pub(crate) framerate: f64,
     pub(crate) duration: Duration,
-    pub(crate) speed: f64,
+    pub(crate) speed: Arc<AtomicU64>,
 
     pub(crate) frame: Arc<Mutex<Frame>>,
     pub(crate) upload_frame: Arc<AtomicBool>,
     pub(crate) frame_buffer: Arc<Mutex<VecDeque<Frame>>>,
     pub(crate) frame_buffer_capacity: Arc<AtomicUsize>,
     pub(crate) last_frame_time: Arc<Mutex<Instant>>,
-    pub(crate) looping: bool,
+    pub(crate) looping: Arc<AtomicBool>,
     pub(crate) is_eos: Arc<AtomicBool>,
     pub(crate) restart_stream: bool,
 
@@ -111,6 +111,7 @@ pub(crate) struct Internal {
 impl Internal {
     pub(crate) fn seek(&self, position: impl Into<Position>, accurate: bool) -> Result<(), Error> {
         let position = position.into();
+        let current_speed = f64::from_bits(self.speed.load(Ordering::SeqCst));
 
         // Clear EOS so the worker resumes pulling after a seek.
         self.is_eos.store(false, Ordering::SeqCst);
@@ -122,7 +123,7 @@ impl Internal {
             flags |= gst::SeekFlags::ACCURATE;
         } else {
             flags |= gst::SeekFlags::KEY_UNIT;
-            if self.speed >= 0.0 {
+            if current_speed >= 0.0 {
                 flags |= gst::SeekFlags::SNAP_AFTER;
             } else {
                 flags |= gst::SeekFlags::SNAP_BEFORE;
@@ -131,7 +132,7 @@ impl Internal {
 
         match &position {
             Position::Time(_) => self.source.seek(
-                self.speed,
+                current_speed,
                 flags,
                 gst::SeekType::Set,
                 gst::GenericFormattedValue::from(position),
@@ -139,7 +140,7 @@ impl Internal {
                 gst::ClockTime::NONE,
             )?,
             Position::Frame(_) => self.source.seek(
-                self.speed,
+                current_speed,
                 flags,
                 gst::SeekType::Set,
                 gst::GenericFormattedValue::from(position),
@@ -182,7 +183,7 @@ impl Internal {
                 position,
             )?;
         }
-        self.speed = speed;
+        self.speed.store(speed.to_bits(), Ordering::SeqCst);
         Ok(())
     }
 
@@ -352,6 +353,12 @@ impl Video {
         ));
         let alive = Arc::new(AtomicBool::new(true));
         let last_frame_time = Arc::new(Mutex::new(Instant::now()));
+        let initial_looping = options.looping.unwrap_or_default();
+        let looping_flag = Arc::new(AtomicBool::new(initial_looping));
+        let looping_ref = Arc::clone(&looping_flag);
+        let initial_speed = options.speed.unwrap_or_default();
+        let speed_state = Arc::new(AtomicU64::new(initial_speed.to_bits()));
+        let speed_ref = Arc::clone(&speed_state);
 
         let frame_ref = Arc::clone(&frame);
         let upload_frame_ref = Arc::clone(&upload_frame);
@@ -378,7 +385,43 @@ impl Video {
                 while let Some(msg) = bus_ref.timed_pop(gst::ClockTime::from_seconds(0)) {
                     match msg.view() {
                         MessageView::Eos(_) => {
-                            is_eos_ref.store(true, Ordering::SeqCst);
+                            if looping_ref.load(Ordering::SeqCst) {
+                                let mut flags = gst::SeekFlags::FLUSH | gst::SeekFlags::KEY_UNIT;
+                                let current_speed =
+                                    f64::from_bits(speed_ref.load(Ordering::SeqCst));
+                                if current_speed >= 0.0 {
+                                    flags |= gst::SeekFlags::SNAP_AFTER;
+                                } else {
+                                    flags |= gst::SeekFlags::SNAP_BEFORE;
+                                }
+                                match pipeline_ref.seek(
+                                    current_speed,
+                                    flags,
+                                    gst::SeekType::Set,
+                                    gst::GenericFormattedValue::from(gst::ClockTime::from_seconds(
+                                        0,
+                                    )),
+                                    gst::SeekType::None,
+                                    gst::ClockTime::NONE,
+                                ) {
+                                    Ok(_) => {
+                                        is_eos_ref.store(false, Ordering::SeqCst);
+                                        let _ = pipeline_ref.set_state(gst::State::Playing);
+                                        frame_buffer_ref.lock().clear();
+                                        upload_frame_ref.store(false, Ordering::SeqCst);
+                                        *subtitle_text_ref.lock() = None;
+                                        upload_text_ref.store(true, Ordering::SeqCst);
+                                        *last_frame_time_ref.lock() = Instant::now();
+                                        continue;
+                                    }
+                                    Err(err) => {
+                                        log::error!("failed to restart video for looping: {}", err);
+                                        is_eos_ref.store(true, Ordering::SeqCst);
+                                    }
+                                }
+                            } else {
+                                is_eos_ref.store(true, Ordering::SeqCst);
+                            }
                         }
                         MessageView::Error(err) => {
                             let debug = err.debug().unwrap_or_default();
@@ -493,7 +536,6 @@ impl Video {
         });
 
         // Apply initial playback speed if specified (must be after pipeline started)
-        let initial_speed = options.speed.unwrap_or_default();
         if (initial_speed - 1.0).abs() > f64::EPSILON {
             let position = cleanup!(
                 pipeline
@@ -532,14 +574,14 @@ impl Video {
             height,
             framerate,
             duration,
-            speed: initial_speed,
+            speed: speed_state,
 
             frame,
             upload_frame,
             frame_buffer,
             frame_buffer_capacity,
             last_frame_time,
-            looping: options.looping.unwrap_or_default(),
+            looping: looping_flag,
             is_eos,
             restart_stream: false,
 
@@ -658,12 +700,12 @@ impl Video {
 
     /// Get if the media will loop or not.
     pub fn looping(&self) -> bool {
-        self.read().looping
+        self.read().looping.load(Ordering::SeqCst)
     }
 
     /// Set if the media will loop or not.
     pub fn set_looping(&self, looping: bool) {
-        self.write().looping = looping;
+        self.write().looping.store(looping, Ordering::SeqCst);
     }
 
     /// Set if the media is paused or not.
@@ -688,7 +730,7 @@ impl Video {
 
     /// Get the current playback speed.
     pub fn speed(&self) -> f64 {
-        self.read().speed
+        f64::from_bits(self.read().speed.load(Ordering::SeqCst))
     }
 
     /// Get the current playback position in time.
