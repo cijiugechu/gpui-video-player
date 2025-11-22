@@ -34,4 +34,4 @@ core-foundation = "0.10"
 
 [dev-dependencies]
 env_logger = "0.11"
-gpui-component = "0.2"
+gpui-component = "0.4"
