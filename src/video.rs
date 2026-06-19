@@ -324,9 +324,26 @@ impl Video {
         let framerate = cleanup!(s.get::<gst::Fraction>("framerate").map_err(|_| Error::Caps))?;
         let framerate = framerate.numer() as f64 / framerate.denom() as f64;
 
-        // Obtain video info from caps for NV12 format
         let vinfo = cleanup!(gst_video::VideoInfo::from_caps(&caps).map_err(|_| Error::Caps))?;
-        let _row_stride0 = vinfo.stride()[0] as usize;
+        let expected_y_size = if width > 0 && height > 0 {
+            width as usize * height as usize
+        } else {
+            0
+        };
+        let expected_size = expected_y_size + expected_y_size / 2;
+        debug_assert!(
+            width > 0
+                && height > 0
+                && vinfo.stride().first().copied() == Some(width)
+                && vinfo.stride().get(1).copied() == Some(width)
+                && vinfo.offset().first().copied() == Some(0)
+                && vinfo.offset().get(1).copied() == Some(expected_y_size)
+                && vinfo.size() == expected_size,
+            "non-tight NV12 video layouts are not supported yet: {width}x{height}, stride={:?}, offset={:?}, size={}",
+            vinfo.stride(),
+            vinfo.offset(),
+            vinfo.size(),
+        );
 
         if framerate.is_nan()
             || framerate.is_infinite()
