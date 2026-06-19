@@ -15,11 +15,11 @@ documentation = "https://docs.rs/gpui-video-player"
 
 [dependencies]
 gpui = "0.2"
-gstreamer = "0.24"
-gstreamer-app = "0.24" # appsink
-gstreamer-base = "0.24" # basesrc
-gstreamer-video = "0.24" # video info/frames (stride-aware copies)
-glib = "0.21" # gobject traits and error type
+gstreamer = "0.25"
+gstreamer-app = "0.25" # appsink
+gstreamer-base = "0.25" # basesrc
+gstreamer-video = "0.25" # video info/frames (stride-aware copies)
+glib = "0.22" # gobject traits and error type
 log = "0.4"
 thiserror = "2"
 url = "2" # media uri
@@ -34,4 +34,4 @@ core-foundation = "0.10"
 
 [dev-dependencies]
 env_logger = "0.11"
-gpui-component = "0.2"
+gpui-component = "0.5"
