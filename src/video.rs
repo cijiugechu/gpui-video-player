@@ -3,6 +3,7 @@ use gstreamer as gst;
 use gstreamer_app as gst_app;
 use gstreamer_app::prelude::*;
 use gstreamer_video as gst_video;
+use gstreamer_video::VideoFrameExt;
 // Note: GPUI imports removed since we're using simple Vec<u8> for RGBA data
 use gst::message::MessageView;
 use parking_lot::{Mutex, RwLock};
@@ -49,9 +50,61 @@ impl Frame {
         Self(gst::Sample::builder().build())
     }
 
-    pub fn readable(&'_ self) -> Option<gst::BufferMap<'_, gst::buffer::Readable>> {
-        self.0.buffer().and_then(|x| x.map_readable().ok())
+    fn packed_nv12(&self) -> Option<(Vec<u8>, u32, u32)> {
+        let caps = self.0.caps()?;
+        let info = gst_video::VideoInfo::from_caps(caps).ok()?;
+        if info.format() != gst_video::VideoFormat::Nv12 {
+            return None;
+        }
+
+        let buffer = self.0.buffer()?;
+        let frame = gst_video::VideoFrameRef::from_buffer_ref_readable(buffer, &info).ok()?;
+        let width = usize::try_from(frame.width()).ok()?;
+        let height = usize::try_from(frame.height()).ok()?;
+        let uv_rows = height.div_ceil(2);
+        let packed_size = width.checked_mul(height.checked_add(uv_rows)?)?;
+        let mut packed = Vec::with_capacity(packed_size);
+
+        let strides = frame.info().stride();
+        let y_stride = usize::try_from(*strides.first()?).ok()?;
+        let uv_stride = usize::try_from(*strides.get(1)?).ok()?;
+        append_plane_rows(
+            &mut packed,
+            frame.plane_data(0).ok()?,
+            y_stride,
+            width,
+            height,
+        )?;
+        append_plane_rows(
+            &mut packed,
+            frame.plane_data(1).ok()?,
+            uv_stride,
+            width,
+            uv_rows,
+        )?;
+
+        Some((packed, frame.width(), frame.height()))
     }
+}
+
+fn append_plane_rows(
+    destination: &mut Vec<u8>,
+    source: &[u8],
+    source_stride: usize,
+    row_bytes: usize,
+    rows: usize,
+) -> Option<()> {
+    if source_stride < row_bytes {
+        return None;
+    }
+
+    for row in 0..rows {
+        let start = row.checked_mul(source_stride)?;
+        let end = start.checked_add(row_bytes)?;
+        destination.extend_from_slice(source.get(start..end)?);
+    }
+
+    Some(())
 }
 
 /// Options for initializing a `Video` without post-construction locking.
@@ -223,11 +276,9 @@ impl Drop for Video {
         if Arc::strong_count(&self.0) == 1
             && let Some(mut inner) = self.0.try_write()
         {
-            inner
-                .source
-                .set_state(gst::State::Null)
-                .expect("failed to set state");
-
+            // Stop the consumer before tearing down the pipeline. Otherwise the
+            // worker can keep querying the pipeline and pulling from appsink while
+            // GStreamer is waiting for those streaming resources to be released.
             inner.alive.store(false, Ordering::SeqCst);
             if let Some(worker) = inner.worker.take()
                 && let Err(err) = worker.join()
@@ -236,6 +287,9 @@ impl Drop for Video {
                     Some(e) => log::error!("Video thread panicked: {e}"),
                     None => log::error!("Video thread panicked with unknown reason"),
                 }
+            }
+            if let Err(err) = inner.source.set_state(gst::State::Null) {
+                log::error!("failed to stop video pipeline: {err}");
             }
         }
     }
@@ -324,26 +378,8 @@ impl Video {
         let framerate = cleanup!(s.get::<gst::Fraction>("framerate").map_err(|_| Error::Caps))?;
         let framerate = framerate.numer() as f64 / framerate.denom() as f64;
 
-        let vinfo = cleanup!(gst_video::VideoInfo::from_caps(&caps).map_err(|_| Error::Caps))?;
-        let expected_y_size = if width > 0 && height > 0 {
-            width as usize * height as usize
-        } else {
-            0
-        };
-        let expected_size = expected_y_size + expected_y_size / 2;
-        debug_assert!(
-            width > 0
-                && height > 0
-                && vinfo.stride().first().copied() == Some(width)
-                && vinfo.stride().get(1).copied() == Some(width)
-                && vinfo.offset().first().copied() == Some(0)
-                && vinfo.offset().get(1).copied() == Some(expected_y_size)
-                && vinfo.size() == expected_size,
-            "non-tight NV12 video layouts are not supported yet: {width}x{height}, stride={:?}, offset={:?}, size={}",
-            vinfo.stride(),
-            vinfo.offset(),
-            vinfo.size(),
-        );
+        let _video_info =
+            cleanup!(gst_video::VideoInfo::from_caps(&caps).map_err(|_| Error::Caps))?;
 
         if framerate.is_nan()
             || framerate.is_infinite()
@@ -778,16 +814,7 @@ impl Video {
     /// Get the current NV12 frame data if available.
     pub fn current_frame_data(&self) -> Option<(Vec<u8>, u32, u32)> {
         let inner = self.read();
-
-        // Check if we have frame data available
-        if let Some(readable) = inner.frame.lock().readable() {
-            let data = readable.as_slice().to_vec();
-            if !data.is_empty() {
-                return Some((data, inner.width as u32, inner.height as u32));
-            }
-        }
-
-        None
+        inner.frame.lock().packed_nv12()
     }
 
     /// Returns true if a new frame arrived since last check and resets the flag.
@@ -822,15 +849,12 @@ impl Video {
         let (width, height) = self.size();
         let inner = self.read();
         let maybe_frame = inner.frame_buffer.lock().pop_front();
-        if let Some(frame) = maybe_frame
-            && let Some(readable) = frame.readable()
-        {
-            let data = readable.as_slice().to_vec();
-            if !data.is_empty() {
-                return Some((data, width as u32, height as u32));
-            }
-        }
-        None
+        maybe_frame
+            .and_then(|frame| frame.packed_nv12())
+            .or_else(|| {
+                log::debug!("failed to repack buffered {width}x{height} NV12 frame");
+                None
+            })
     }
 
     /// Number of frames currently buffered.
