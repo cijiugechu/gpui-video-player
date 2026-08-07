@@ -276,11 +276,9 @@ impl Drop for Video {
         if Arc::strong_count(&self.0) == 1
             && let Some(mut inner) = self.0.try_write()
         {
-            inner
-                .source
-                .set_state(gst::State::Null)
-                .expect("failed to set state");
-
+            // Stop the consumer before tearing down the pipeline. Otherwise the
+            // worker can keep querying the pipeline and pulling from appsink while
+            // GStreamer is waiting for those streaming resources to be released.
             inner.alive.store(false, Ordering::SeqCst);
             if let Some(worker) = inner.worker.take()
                 && let Err(err) = worker.join()
@@ -289,6 +287,9 @@ impl Drop for Video {
                     Some(e) => log::error!("Video thread panicked: {e}"),
                     None => log::error!("Video thread panicked with unknown reason"),
                 }
+            }
+            if let Err(err) = inner.source.set_state(gst::State::Null) {
+                log::error!("failed to stop video pipeline: {err}");
             }
         }
     }
