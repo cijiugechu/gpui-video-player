@@ -1,7 +1,6 @@
-use gpui::{
-    App, Application, Context, CursorStyle, Render, Window, WindowOptions, div, prelude::*,
+use gpui_video_player::gpui::{
+    App, Context, CursorStyle, Render, Window, WindowOptions, div, prelude::*,
 };
-use gpui_component::button::Button;
 use gpui_video_player::{Video, video};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -37,8 +36,12 @@ impl Render for WithControlsExample {
         let is_paused = self.video.paused();
         let play_label = if is_paused { "▶️" } else { "⏸️" };
 
-        let back_5s = Button::new("back-5s")
-            .label("⏪")
+        let back_5s = div()
+            .id("back-5s")
+            .px_3()
+            .py_1()
+            .rounded_md()
+            .child("⏪")
             .cursor(CursorStyle::PointingHand)
             .on_click(cx.listener(|this: &mut Self, _event, _window, cx| {
                 if !this.click_allowed() {
@@ -58,8 +61,12 @@ impl Render for WithControlsExample {
                 .detach();
             }));
 
-        let play_pause = Button::new("play-pause")
-            .label(play_label)
+        let play_pause = div()
+            .id("play-pause")
+            .px_3()
+            .py_1()
+            .rounded_md()
+            .child(play_label)
             .cursor(CursorStyle::PointingHand)
             .on_click(cx.listener(|this: &mut Self, _event, _window, cx| {
                 if !this.click_allowed() {
@@ -70,8 +77,12 @@ impl Render for WithControlsExample {
                 cx.notify();
             }));
 
-        let forward_5s = Button::new("forward-5s")
-            .label("⏩")
+        let forward_5s = div()
+            .id("forward-5s")
+            .px_3()
+            .py_1()
+            .rounded_md()
+            .child("⏩")
             .cursor(CursorStyle::PointingHand)
             .on_click(cx.listener(|this: &mut Self, _event, _window, cx| {
                 if !this.click_allowed() {
@@ -129,7 +140,11 @@ impl Render for WithControlsExample {
 
 fn main() {
     env_logger::init();
-    Application::new().run(|cx: &mut App| {
+    #[cfg(feature = "gpui-pre")]
+    let application = gpui_platform::application();
+    #[cfg(not(feature = "gpui-pre"))]
+    let application = gpui_video_player::gpui::Application::new();
+    application.run(|cx: &mut App| {
         let uri = Url::from_file_path(
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("./assets/test3.mp4"),
         )
@@ -141,8 +156,6 @@ fn main() {
                 ..Default::default()
             },
             |_, cx| {
-                gpui_component::init(cx);
-
                 let video = Video::new(&uri).expect("failed to create video");
                 cx.new(|_| WithControlsExample::new(video))
             },

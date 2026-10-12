@@ -22,10 +22,25 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-gpui-video-player = "0.1.0"
+gpui = "0.2"
+gpui-video-player = "0.1.2"
 ```
 
-**Note:** This library depends on GPUI, which must be available in your project. The current version requires GPUI from the Zed repository.
+The default `gpui` feature uses GPUI 0.2. To use `gpui-pre` instead:
+
+```toml
+[dependencies]
+gpui = { package = "gpui-pre", version = "0.3", default-features = false }
+gpui-video-player = { version = "0.1.2", default-features = false, features = ["gpui-pre"] }
+```
+
+If both features are enabled, `gpui-pre` takes precedence. Only the selected backend's
+types are supported by `VideoElement`; use the same GPUI package in your application.
+The selected backend is also re-exported as `gpui_video_player::gpui`.
+With gpui-pre, also add `gpui_platform = { package = "gpui-pre-platform", version = "=0.3.8" }`
+and start the app with `gpui_platform::application()` instead of `Application::new()`.
+
+The gpui-pre dependency is pinned to 0.3.8 because 0.3.9 changes the macOS surface API.
 
 ## Usage
 
@@ -192,6 +207,9 @@ cargo run --example with_controls
 
 # Looping playback
 cargo run --example looping
+
+# Any example with gpui-pre
+cargo run --no-default-features --features gpui-pre --example video_player
 ```
 
 ## Platform Notes

@@ -13,7 +13,7 @@
 //! # Example
 //!
 //! ```no_run
-//! use gpui::{App, Application, Context, Render, Window, WindowOptions, div, prelude::*};
+//! use gpui_video_player::gpui::{App, Context, Render, Window, WindowOptions, div, prelude::*};
 //! use gpui_video_player::{Video, video};
 //! use std::path::PathBuf;
 //! use url::Url;
@@ -38,7 +38,11 @@
 //! }
 //!
 //! fn main() {
-//!     Application::new().run(|cx: &mut App| {
+//! #   #[cfg(feature = "gpui-pre")]
+//! #   let application = gpui_platform::application();
+//! #   #[cfg(not(feature = "gpui-pre"))]
+//!     let application = gpui_video_player::gpui::Application::new();
+//!     application.run(|cx: &mut App| {
 //!         let uri = Url::from_file_path(
 //!             PathBuf::from("./video.mp4")
 //!         ).expect("invalid file path");
@@ -70,10 +74,26 @@
 //!
 //! See the `examples/` directory for more complete usage patterns.
 
+//! # GPUI Backend
+//!
+//! The default `gpui` feature uses GPUI 0.2. For gpui-pre 0.3.8, disable default
+//! features and enable `gpui-pre`. If both are enabled, `gpui-pre` takes precedence.
+//! The selected backend is re-exported as [`gpui`].
+
+#[cfg(not(any(feature = "gpui", feature = "gpui-pre")))]
+compile_error!("enable either the `gpui` (default) or `gpui-pre` feature");
+
+#[cfg(all(feature = "gpui", not(feature = "gpui-pre")))]
+pub use gpui;
+#[cfg(feature = "gpui-pre")]
+pub use gpui_pre as gpui;
+
+#[cfg(any(feature = "gpui", feature = "gpui-pre"))]
 mod element;
 mod error;
 mod video;
 
+#[cfg(any(feature = "gpui", feature = "gpui-pre"))]
 pub use element::{VideoElement, video};
 pub use error::Error;
 pub use video::{Position, Video, VideoOptions};

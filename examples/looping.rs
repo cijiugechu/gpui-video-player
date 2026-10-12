@@ -1,4 +1,4 @@
-use gpui::{App, Application, Context, Render, Window, WindowOptions, div, prelude::*};
+use gpui_video_player::gpui::{App, Context, Render, Window, WindowOptions, div, prelude::*};
 use gpui_video_player::{Video, VideoOptions, video};
 use std::path::PathBuf;
 use url::Url;
@@ -26,7 +26,11 @@ impl Render for LoopingExample {
 
 fn main() {
     env_logger::init();
-    Application::new().run(|cx: &mut App| {
+    #[cfg(feature = "gpui-pre")]
+    let application = gpui_platform::application();
+    #[cfg(not(feature = "gpui-pre"))]
+    let application = gpui_video_player::gpui::Application::new();
+    application.run(|cx: &mut App| {
         let uri = Url::from_file_path(
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("./assets/test1.mp4"),
         )

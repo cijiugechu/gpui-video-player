@@ -1,4 +1,4 @@
-use crate::video::Video;
+use crate::{gpui, video::Video};
 #[cfg(target_os = "macos")]
 use core_foundation::{
     base::TCFType,
@@ -10,6 +10,8 @@ use core_foundation::{
 use core_video::pixel_buffer::{CVPixelBuffer, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange};
 #[cfg(target_os = "macos")]
 use core_video::r#return::kCVReturnSuccess;
+#[cfg(all(target_os = "macos", feature = "gpui-pre"))]
+use core_video_pre as core_video;
 use gpui::{
     Element, ElementId, GlobalElementId, InspectorElementId, IntoElement, LayoutId, Window,
 };
@@ -138,16 +140,26 @@ impl VideoElement {
             let prev_image: Option<Arc<gpui::RenderImage>> =
                 last_render_image.update(cx, |this, _| this.replace(render_image.clone()));
 
-            // Paint the image within the fitted bounds (letterboxed/pillarboxed)
-            window
-                .paint_image(
-                    dest_bounds,
-                    gpui::Corners::default(),
-                    render_image.clone(),
-                    0,
-                    false,
-                )
-                .ok();
+            #[cfg(feature = "gpui-pre")]
+            let paint_result = window.paint_image(
+                bounds,
+                dest_bounds,
+                gpui::Corners::default(),
+                render_image.clone(),
+                0,
+                false,
+            );
+            #[cfg(not(feature = "gpui-pre"))]
+            let paint_result = window.paint_image(
+                dest_bounds,
+                gpui::Corners::default(),
+                render_image.clone(),
+                0,
+                false,
+            );
+            if let Err(error) = paint_result {
+                log::error!("failed to paint video frame: {error}");
+            }
 
             // Drop the previously uploaded image after painting to avoid atlas growth
             if let Some(prev) = prev_image {
