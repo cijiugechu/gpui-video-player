@@ -37,10 +37,10 @@ gpui-video-player = { version = "0.1.2", default-features = false, features = ["
 If both features are enabled, `gpui-pre` takes precedence. Only the selected backend's
 types are supported by `VideoElement`; use the same GPUI package in your application.
 The selected backend is also re-exported as `gpui_video_player::gpui`.
-With gpui-pre, also add `gpui_platform = { package = "gpui-pre-platform", version = "=0.3.8" }`
+With gpui-pre, also add `gpui_platform = { package = "gpui-pre-platform", version = "=0.3.9" }`
 and start the app with `gpui_platform::application()` instead of `Application::new()`.
 
-The gpui-pre dependency is pinned to 0.3.8 because 0.3.9 changes the macOS surface API.
+The gpui-pre dependency is pinned to 0.3.9 changes the macOS surface API.
 
 ## Usage
 

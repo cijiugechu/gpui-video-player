@@ -76,7 +76,7 @@
 
 //! # GPUI Backend
 //!
-//! The default `gpui` feature uses GPUI 0.2. For gpui-pre 0.3.8, disable default
+//! The default `gpui` feature uses GPUI 0.2. For gpui-pre 0.3.9, disable default
 //! features and enable `gpui-pre`. If both are enabled, `gpui-pre` takes precedence.
 //! The selected backend is re-exported as [`gpui`].
 

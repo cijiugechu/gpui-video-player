@@ -265,6 +265,19 @@ impl VideoElement {
         let _ = pixel_buffer.unlock_base_address(0);
 
         let dest_bounds = self.fitted_bounds(bounds, frame_width, frame_height);
+        #[cfg(feature = "gpui-pre")]
+        let pixel_buffer = {
+            let Some(ptr) = std::ptr::NonNull::new(
+                pixel_buffer
+                    .as_concrete_TypeRef()
+                    .cast::<objc2_core_video::CVPixelBuffer>(),
+            ) else {
+                return false;
+            };
+            // SAFETY: Both bindings wrap the same live Core Video pixel buffer.
+            // Retain it for GPUI's scene before the original wrapper is dropped.
+            unsafe { objc2_core_foundation::CFRetained::retain(ptr) }
+        };
         window.paint_surface(dest_bounds, pixel_buffer);
         true
     }

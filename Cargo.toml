@@ -16,11 +16,11 @@ documentation = "https://docs.rs/gpui-video-player"
 [features]
 default = ["gpui"]
 gpui = ["dep:gpui", "dep:core-video"]
-gpui-pre = ["dep:gpui_pre", "dep:core-video-pre"]
+gpui-pre = ["dep:gpui_pre", "dep:core-video-pre", "dep:objc2-core-foundation", "dep:objc2-core-video"]
 
 [dependencies]
 gpui = { version = "0.2", optional = true }
-gpui_pre = { package = "gpui-pre", version = "0.3", default-features = false, optional = true }
+gpui_pre = { package = "gpui-pre", version = "0.3.9", default-features = false, optional = true }
 gstreamer = "0.25"
 gstreamer-app = "0.25" # appsink
 gstreamer-base = "0.25" # basesrc
@@ -38,7 +38,9 @@ yuv = "0.8"
 core-video = { version = "0.4", optional = true }
 core-video-pre = { package = "core-video", version = "0.5", optional = true }
 core-foundation = "0.10"
+objc2-core-foundation = { version = "0.3.2", optional = true }
+objc2-core-video = { version = "0.3.2", optional = true }
 
 [dev-dependencies]
 env_logger = "0.11"
-gpui_platform = { package = "gpui-pre-platform", version = "=0.3.8" }
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.9" }
