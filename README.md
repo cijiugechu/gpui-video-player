@@ -30,26 +30,30 @@ The default `gpui` feature uses GPUI 0.2. To use `gpui-pre` instead:
 
 ```toml
 [dependencies]
-gpui = { package = "gpui-pre", version = "0.3", default-features = false }
+gpui = { package = "gpui-pre", version = "=0.3.9", default-features = false }
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.9", features = ["font-kit"] }
 gpui-video-player = { version = "0.1.2", default-features = false, features = ["gpui-pre"] }
 ```
 
 If both features are enabled, `gpui-pre` takes precedence. Only the selected backend's
 types are supported by `VideoElement`; use the same GPUI package in your application.
 The selected backend is also re-exported as `gpui_video_player::gpui`.
-With gpui-pre, also add `gpui_platform = { package = "gpui-pre-platform", version = "=0.3.9" }`
-and start the app with `gpui_platform::application()` instead of `Application::new()`.
-
-The gpui-pre dependency is pinned to 0.3.9 changes the macOS surface API.
+Keep `gpui-pre` and `gpui-pre-platform` pinned to the same exact version (`=0.3.9`)
+to avoid API/type mismatches during dependency updates. The platform dependency's
+`font-kit` feature enables the macOS text backend; consumers must enable it too
+(the library's dev-dependencies do not enable features in downstream applications).
 
 ## Usage
 
 ### Basic Video Playback
 
+This example uses the `gpui-pre` dependencies above. With the default GPUI 0.2
+backend, replace `gpui_platform::application()` with `gpui::Application::new()`.
+Add `env_logger = "0.11"` and `url = "2"` to your application dependencies.
+
 ```rust
-use gpui::{App, Application, Context, Render, Window, WindowOptions, div, prelude::*};
+use gpui::{App, Context, Render, Window, WindowOptions, div, prelude::*};
 use gpui_video_player::{Video, video};
-use std::path::PathBuf;
 use url::Url;
 
 struct VideoPlayer {
@@ -71,25 +75,29 @@ impl Render for VideoPlayer {
     }
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
-    Application::new().run(|cx: &mut App| {
-        let uri = Url::from_file_path(
-            PathBuf::from("./path/to/your/video.mp4"),
-        ).expect("invalid file path");
-
-        cx.open_window(
+    let path = std::env::current_dir()?.join("path/to/your/video.mp4");
+    let uri = Url::from_file_path(path).map_err(|_| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid video path")
+    })?;
+    let video = Video::new(&uri)?;
+    let application = gpui_platform::application();
+    application.run(move |cx: &mut App| {
+        if let Err(error) = cx.open_window(
             WindowOptions {
                 focus: true,
                 ..Default::default()
             },
-            |_, cx| {
-                let video = Video::new(&uri).expect("failed to create video");
-                cx.new(|_| VideoPlayer { video })
-            },
-        ).unwrap();
+            |_, cx| cx.new(|_| VideoPlayer { video }),
+        ) {
+            eprintln!("failed to open window: {error}");
+            cx.quit();
+            return;
+        }
         cx.activate(true);
     });
+    Ok(())
 }
 ```
 
@@ -212,9 +220,33 @@ cargo run --example looping
 cargo run --no-default-features --features gpui-pre --example video_player
 ```
 
+The `with_controls` example uses GPUI `div` controls so it can compile against
+both backends without introducing `gpui-component`'s separate GPUI types. Controls
+support Tab/Shift-Tab navigation, Enter/Space activation, visible focus, and text
+labels. They are demonstration controls, not full `Button` replacements: native
+accessibility button roles and screen-reader actions are not implemented. For a
+production UI, use accessible components compatible with your selected backend.
+
 ## Platform Notes
 
 ### macOS
+
+For the gpui-pre backend, the Core Video bridge retains a separate reference for
+GPUI's scene. The source wrapper and scene each release their own reference;
+frame replacement and window teardown must release the scene's ownership.
+
+Run the ownership regression and real-window stress checks on a macOS desktop:
+
+```bash
+cargo test --no-default-features --features gpui-pre --lib retained_pixel_buffer
+RUST_LOG=gpui_video_player::element=trace,video_player=info cargo run --no-default-features --features gpui-pre --example video_player -- --stress
+```
+
+The stress mode plays the bundled clip in 20 successive windows, closing each
+after one second. Check for native-surface trace messages and completion of all
+20 cycles. Use Instruments Allocations/Leaks for longer memory investigations;
+a passing smoke test alone does not prove absence of lifetime bugs or leaks.
+
 - Uses `CVPixelBuffer` for hardware-accelerated rendering when possible
 - Falls back to software rendering via GPUI sprite atlas
 

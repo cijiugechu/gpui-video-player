@@ -262,23 +262,19 @@ impl VideoElement {
                 );
             }
         }
-        let _ = pixel_buffer.unlock_base_address(0);
+        let status = pixel_buffer.unlock_base_address(0);
+        if status != kCVReturnSuccess {
+            log::error!("failed to unlock video pixel buffer: {status}");
+            return false;
+        }
 
         let dest_bounds = self.fitted_bounds(bounds, frame_width, frame_height);
         #[cfg(feature = "gpui-pre")]
-        let pixel_buffer = {
-            let Some(ptr) = std::ptr::NonNull::new(
-                pixel_buffer
-                    .as_concrete_TypeRef()
-                    .cast::<objc2_core_video::CVPixelBuffer>(),
-            ) else {
-                return false;
-            };
-            // SAFETY: Both bindings wrap the same live Core Video pixel buffer.
-            // Retain it for GPUI's scene before the original wrapper is dropped.
-            unsafe { objc2_core_foundation::CFRetained::retain(ptr) }
+        let Some(pixel_buffer) = retain_pixel_buffer(&pixel_buffer) else {
+            return false;
         };
         window.paint_surface(dest_bounds, pixel_buffer);
+        log::trace!("painted native video surface");
         true
     }
 
@@ -490,4 +486,50 @@ impl IntoElement for VideoElement {
 /// Helper function to create a video element
 pub fn video(video: Video) -> VideoElement {
     VideoElement::new(video)
+}
+
+#[cfg(all(target_os = "macos", feature = "gpui-pre"))]
+fn retain_pixel_buffer(
+    buffer: &CVPixelBuffer,
+) -> Option<objc2_core_foundation::CFRetained<objc2_core_video::CVPixelBuffer>> {
+    let ptr = std::ptr::NonNull::new(
+        buffer
+            .as_concrete_TypeRef()
+            .cast::<objc2_core_video::CVPixelBuffer>(),
+    )?;
+    // SAFETY: Both bindings describe Apple's opaque CVPixelBufferRef, not Rust
+    // wrapper layouts. `buffer` owns a live +1 reference throughout this call.
+    // Retain creates a separate +1 reference; adopting the pointer without a
+    // retain would let both wrappers release the same ownership claim.
+    // The caller moves CFRetained into GPUI's scene via paint_surface. Dropping
+    // the original wrapper is then safe, and scene/frame/window teardown releases
+    // GPUI's reference. No CPU writes may occur after handing it to the renderer.
+    Some(unsafe { objc2_core_foundation::CFRetained::retain(ptr) })
+}
+
+#[cfg(all(test, target_os = "macos", feature = "gpui-pre"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn retained_pixel_buffer_survives_original_and_scene_replacement() {
+        for _ in 0..1000 {
+            let buffer =
+                CVPixelBuffer::new(kCVPixelFormatType_420YpCbCr8BiPlanarFullRange, 16, 16, None)
+                    .expect("allocate pixel buffer");
+            let initial_count = buffer.retain_count();
+            let surface = retain_pixel_buffer(&buffer).expect("live pixel buffer");
+            assert_eq!(buffer.retain_count(), initial_count + 1);
+            let next_surface = retain_pixel_buffer(&buffer).expect("live pixel buffer");
+            assert_eq!(buffer.retain_count(), initial_count + 2);
+            drop(surface);
+            assert_eq!(buffer.retain_count(), initial_count + 1);
+            drop(next_surface);
+            assert_eq!(buffer.retain_count(), initial_count);
+            let surface = retain_pixel_buffer(&buffer).expect("live pixel buffer");
+            drop(buffer);
+            assert_eq!(objc2_core_video::CVPixelBufferGetWidth(&surface), 16);
+            assert_eq!(objc2_core_video::CVPixelBufferGetHeight(&surface), 16);
+        }
+    }
 }
