@@ -23,7 +23,7 @@ glib = "0.22" # gobject traits and error type
 log = "0.4"
 thiserror = "2"
 url = "2" # media uri
-parking_lot = "0.12"
+parking_lot = "0.13"
 image = { version = "0.25", default-features = false, features = ["png", "gif", "webp"] }
 smallvec = "1"
 yuv = "0.8"
