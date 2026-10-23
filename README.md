@@ -23,7 +23,7 @@ Add this to your `Cargo.toml`:
 ```toml
 [dependencies]
 gpui = "0.2"
-gpui-video-player = "0.1.2"
+gpui-video-player = "0.1.3"
 ```
 
 The default `gpui` feature uses GPUI 0.2. To use `gpui-pre` instead:
@@ -32,7 +32,7 @@ The default `gpui` feature uses GPUI 0.2. To use `gpui-pre` instead:
 [dependencies]
 gpui = { package = "gpui-pre", version = "=0.3.9", default-features = false }
 gpui_platform = { package = "gpui-pre-platform", version = "=0.3.9", features = ["font-kit"] }
-gpui-video-player = { version = "0.1.2", default-features = false, features = ["gpui-pre"] }
+gpui-video-player = { version = "0.1.3", default-features = false, features = ["gpui-pre"] }
 ```
 
 If both features are enabled, `gpui-pre` takes precedence. Only the selected backend's
