@@ -85,8 +85,11 @@ impl WithControlsExample {
             .px_3()
             .py_1()
             .rounded_md()
+            .bg(gpui_video_player::gpui::rgba(0x000000aa))
+            .text_color(gpui_video_player::gpui::white())
             .border_1()
-            .border_color(gpui_video_player::gpui::transparent_black())
+            .border_color(gpui_video_player::gpui::rgba(0xffffff44))
+            .hover(|style| style.bg(gpui_video_player::gpui::rgba(0x333333cc)))
             .focus(|style| style.border_color(gpui_video_player::gpui::rgb(0x4488ff)))
             .child(label)
             .cursor(CursorStyle::PointingHand)
@@ -134,7 +137,13 @@ impl Render for WithControlsExample {
             })
             .flex()
             .flex_col()
-            .when_some(self.error.clone(), |this, error| this.child(error))
+            .when_some(self.error.clone(), |this, error| {
+                this.child(
+                    div()
+                        .text_color(gpui_video_player::gpui::rgb(0xff5555))
+                        .child(error),
+                )
+            })
             .items_center()
             .justify_center()
             .child(
@@ -148,7 +157,10 @@ impl Render for WithControlsExample {
                     .child(
                         div()
                             .absolute()
+                            .top_0()
+                            .left_0()
                             .size_full()
+                            .pt_3()
                             .flex()
                             .items_start()
                             .justify_center()
